@@ -7,7 +7,7 @@ FallingPlanet.egg-info/dependency_links.txt
 FallingPlanet.egg-info/requires.txt
 FallingPlanet.egg-info/top_level.txt
 FallingPlanet/orbit/__init__.py
-FallingPlanet/orbit/models/BertTiny.py
+FallingPlanet/orbit/models/BertFineTuneForSequenceClassification.py
 FallingPlanet/orbit/models/__init__.py
 FallingPlanet/orbit/utils/Metrics.py
 FallingPlanet/orbit/utils/Tokenizer.py
