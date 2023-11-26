@@ -15,14 +15,22 @@ class BertFineTuneBase(nn.Module):
         else:
             self.classifier = nn.Linear(768, num_labels[0])
 
-    def forward(self, input_ids, attention_mask):
-        outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
-        pooled_output = outputs.pooler_output
+    def forward(self, all_input_ids, all_attention_masks):
+        all_logits = []
 
-        if hasattr(self, 'classifiers'):
-            return [classifier(pooled_output) for classifier in self.classifiers]
-        else:
-            return self.classifier(pooled_output)
+        for input_ids, attention_mask in zip(all_input_ids, all_attention_masks):
+            outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
+            pooled_output = outputs.pooler_output
+
+            if hasattr(self, 'classifiers'):
+                logits = [classifier(pooled_output) for classifier in self.classifiers]
+            else:
+                logits = self.classifier(pooled_output)
+
+            all_logits.append(logits)
+
+        return all_logits
+
         
 class BertFineTuneLarge(nn.Module):
     def __init__(self, num_labels, from_saved_weights=None, num_tasks=1, **kwargs):
@@ -37,14 +45,22 @@ class BertFineTuneLarge(nn.Module):
         else:
             self.classifier = nn.Linear(1024, num_labels[0])
 
-    def forward(self, input_ids, attention_mask):
-        outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
-        pooled_output = outputs.pooler_output
+    def forward(self, all_input_ids, all_attention_masks):
+        all_logits = []
 
-        if hasattr(self, 'classifiers'):
-            return [classifier(pooled_output) for classifier in self.classifiers]
-        else:
-            return self.classifier(pooled_output)
+        for input_ids, attention_mask in zip(all_input_ids, all_attention_masks):
+            outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
+            pooled_output = outputs.pooler_output
+
+            if hasattr(self, 'classifiers'):
+                logits = [classifier(pooled_output) for classifier in self.classifiers]
+            else:
+                logits = self.classifier(pooled_output)
+
+            all_logits.append(logits)
+
+        return all_logits
+
         
 class BertFineTuneTiny(nn.Module):
     def __init__(self, num_labels, from_saved_weights=None, num_tasks=1, **kwargs):
@@ -59,14 +75,23 @@ class BertFineTuneTiny(nn.Module):
         else:
             self.classifier = nn.Linear(128, num_labels[0])
 
-    def forward(self, input_ids, attention_mask):
-        outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
-        pooled_output = outputs.pooler_output
+    
+    def forward(self, all_input_ids, all_attention_masks):
+        all_logits = []
 
-        if hasattr(self, 'classifiers'):
-            return [classifier(pooled_output) for classifier in self.classifiers]
-        else:
-            return self.classifier(pooled_output)
+        for input_ids, attention_mask in zip(all_input_ids, all_attention_masks):
+            outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
+            pooled_output = outputs.pooler_output
+
+            if hasattr(self, 'classifiers'):
+                logits = [classifier(pooled_output) for classifier in self.classifiers]
+            else:
+                logits = self.classifier(pooled_output)
+
+            all_logits.append(logits)
+
+        return all_logits
+
         
 class BertFineTuneSmall(nn.Module):
     def __init__(self, num_labels, from_saved_weights=None, num_tasks=1, **kwargs):
@@ -81,14 +106,22 @@ class BertFineTuneSmall(nn.Module):
         else:
             self.classifier = nn.Linear(512, num_labels[0])
 
-    def forward(self, input_ids, attention_mask):
-        outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
-        pooled_output = outputs.pooler_output
+    def forward(self, all_input_ids, all_attention_masks):
+        all_logits = []
 
-        if hasattr(self, 'classifiers'):
-            return [classifier(pooled_output) for classifier in self.classifiers]
-        else:
-            return self.classifier(pooled_output)
+        for input_ids, attention_mask in zip(all_input_ids, all_attention_masks):
+            outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
+            pooled_output = outputs.pooler_output
+
+            if hasattr(self, 'classifiers'):
+                logits = [classifier(pooled_output) for classifier in self.classifiers]
+            else:
+                logits = self.classifier(pooled_output)
+
+            all_logits.append(logits)
+
+        return all_logits
+
 
 class BertFineTuneMini(nn.Module):
     def __init__(self, num_labels, from_saved_weights=None, num_tasks=1, **kwargs):
@@ -103,14 +136,22 @@ class BertFineTuneMini(nn.Module):
         else:
             self.classifier = nn.Linear(256, num_labels[0])
 
-    def forward(self, input_ids, attention_mask):
-        outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
-        pooled_output = outputs.pooler_output
+    def forward(self, all_input_ids, all_attention_masks):
+        all_logits = []
 
-        if hasattr(self, 'classifiers'):
-            return [classifier(pooled_output) for classifier in self.classifiers]
-        else:
-            return self.classifier(pooled_output)
+        for input_ids, attention_mask in zip(all_input_ids, all_attention_masks):
+            outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
+            pooled_output = outputs.pooler_output
+
+            if hasattr(self, 'classifiers'):
+                logits = [classifier(pooled_output) for classifier in self.classifiers]
+            else:
+                logits = self.classifier(pooled_output)
+
+            all_logits.append(logits)
+
+        return all_logits
+
         
 class BertFineTuneMedium(nn.Module):
     def __init__(self, num_labels, from_saved_weights=None, num_tasks=1, **kwargs):
@@ -125,11 +166,18 @@ class BertFineTuneMedium(nn.Module):
         else:
             self.classifier = nn.Linear(512, num_labels[0])
 
-    def forward(self, input_ids, attention_mask):
-        outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
-        pooled_output = outputs.pooler_output
+    def forward(self, all_input_ids, all_attention_masks):
+        all_logits = []
 
-        if hasattr(self, 'classifiers'):
-            return [classifier(pooled_output) for classifier in self.classifiers]
-        else:
-            return self.classifier(pooled_output)
+        for input_ids, attention_mask in zip(all_input_ids, all_attention_masks):
+            outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
+            pooled_output = outputs.pooler_output
+
+            if hasattr(self, 'classifiers'):
+                logits = [classifier(pooled_output) for classifier in self.classifiers]
+            else:
+                logits = self.classifier(pooled_output)
+
+            all_logits.append(logits)
+
+        return all_logits
