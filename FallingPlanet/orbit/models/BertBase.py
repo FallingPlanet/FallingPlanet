@@ -4,13 +4,13 @@ import torch
 class BertFineTuneForSequenceClassification(nn.Module):
     def __init__(self, num_labels, from_saved_weights=None, num_tasks=1, **kwargs):
         super(BertFineTuneForSequenceClassification, self).__init__()
-        self.bert = BertModel.from_pretrained("prajjwal1/bert-tiny")
+        self.bert = BertModel.from_pretrained("bert-base-cased")
         
         if from_saved_weights:
             self.bert.load_state_dict(torch.load(from_saved_weights))
 
         if num_tasks > 1:
-            self.classifiers = nn.ModuleList([nn.Linear(128, n_labels) for n_labels in num_labels])
+            self.classifiers = nn.ModuleList([nn.Linear(728, n_labels) for n_labels in num_labels])
         else:
             self.classifier = nn.Linear(128, num_labels[0])
 
