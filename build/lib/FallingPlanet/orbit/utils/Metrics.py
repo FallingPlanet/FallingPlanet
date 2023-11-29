@@ -17,14 +17,13 @@ class AdvancedMetrics:
         macs, _ = get_model_complexity_info(self.model, (1, 256), as_strings=True)
         return macs
     
-    def measure_inference_time(self, input_ids, attention_mask):
+    # Inside AdvancedMetrics class
+    def measure_inference_time(self, input_ids_list, attention_mask_list):
         start_time = time.time()
         with torch.no_grad():
-            output = self.model(input_ids.to(self.device), attention_mask.to(self.device), 
-                                input_ids.to(self.device), attention_mask.to(self.device))
-        end_time = time.time()
-        total_time = end_time - start_time
-        return total_time
+            _ = self.model(input_ids_list, attention_mask_list)
+        return time.time() - start_time
+
 
     def measure_tokenization_time(self, text, tokenizer):
         start_time = time.time()

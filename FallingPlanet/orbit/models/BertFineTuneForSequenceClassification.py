@@ -16,20 +16,18 @@ class BertFineTuneBase(nn.Module):
             self.classifier = nn.Linear(768, num_labels[0])
 
     def forward(self, all_input_ids, all_attention_masks):
-        all_logits = []
-
+        pooled_outputs = []
         for input_ids, attention_mask in zip(all_input_ids, all_attention_masks):
             outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
-            pooled_output = outputs.pooler_output
+            pooled_outputs.append(outputs.pooler_output)
 
-            if hasattr(self, 'classifiers'):
-                logits = [classifier(pooled_output) for classifier in self.classifiers]
-            else:
-                logits = self.classifier(pooled_output)
-
-            all_logits.append(logits)
+        if hasattr(self, 'classifiers'):
+            all_logits = [torch.stack([classifier(pooled_output) for pooled_output in pooled_outputs], dim=0) for classifier in self.classifiers]
+        else:
+            all_logits = torch.stack([self.classifier(pooled_output) for pooled_output in pooled_outputs], dim=0)
 
         return all_logits
+
 
         
 class BertFineTuneLarge(nn.Module):
@@ -46,20 +44,18 @@ class BertFineTuneLarge(nn.Module):
             self.classifier = nn.Linear(1024, num_labels[0])
 
     def forward(self, all_input_ids, all_attention_masks):
-        all_logits = []
-
+        pooled_outputs = []
         for input_ids, attention_mask in zip(all_input_ids, all_attention_masks):
             outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
-            pooled_output = outputs.pooler_output
+            pooled_outputs.append(outputs.pooler_output)
 
-            if hasattr(self, 'classifiers'):
-                logits = [classifier(pooled_output) for classifier in self.classifiers]
-            else:
-                logits = self.classifier(pooled_output)
-
-            all_logits.append(logits)
+        if hasattr(self, 'classifiers'):
+            all_logits = [torch.stack([classifier(pooled_output) for pooled_output in pooled_outputs], dim=0) for classifier in self.classifiers]
+        else:
+            all_logits = torch.stack([self.classifier(pooled_output) for pooled_output in pooled_outputs], dim=0)
 
         return all_logits
+
 
         
 class BertFineTuneTiny(nn.Module):
@@ -77,20 +73,18 @@ class BertFineTuneTiny(nn.Module):
 
     
     def forward(self, all_input_ids, all_attention_masks):
-        all_logits = []
-
+        pooled_outputs = []
         for input_ids, attention_mask in zip(all_input_ids, all_attention_masks):
             outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
-            pooled_output = outputs.pooler_output
+            pooled_outputs.append(outputs.pooler_output)
 
-            if hasattr(self, 'classifiers'):
-                logits = [classifier(pooled_output) for classifier in self.classifiers]
-            else:
-                logits = self.classifier(pooled_output)
-
-            all_logits.append(logits)
+        if hasattr(self, 'classifiers'):
+            all_logits = [torch.stack([classifier(pooled_output) for pooled_output in pooled_outputs], dim=0) for classifier in self.classifiers]
+        else:
+            all_logits = torch.stack([self.classifier(pooled_output) for pooled_output in pooled_outputs], dim=0)
 
         return all_logits
+
 
         
 class BertFineTuneSmall(nn.Module):
@@ -107,20 +101,18 @@ class BertFineTuneSmall(nn.Module):
             self.classifier = nn.Linear(512, num_labels[0])
 
     def forward(self, all_input_ids, all_attention_masks):
-        all_logits = []
-
+        pooled_outputs = []
         for input_ids, attention_mask in zip(all_input_ids, all_attention_masks):
             outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
-            pooled_output = outputs.pooler_output
+            pooled_outputs.append(outputs.pooler_output)
 
-            if hasattr(self, 'classifiers'):
-                logits = [classifier(pooled_output) for classifier in self.classifiers]
-            else:
-                logits = self.classifier(pooled_output)
-
-            all_logits.append(logits)
+        if hasattr(self, 'classifiers'):
+            all_logits = [torch.stack([classifier(pooled_output) for pooled_output in pooled_outputs], dim=0) for classifier in self.classifiers]
+        else:
+            all_logits = torch.stack([self.classifier(pooled_output) for pooled_output in pooled_outputs], dim=0)
 
         return all_logits
+
 
 
 class BertFineTuneMini(nn.Module):
@@ -137,20 +129,18 @@ class BertFineTuneMini(nn.Module):
             self.classifier = nn.Linear(256, num_labels[0])
 
     def forward(self, all_input_ids, all_attention_masks):
-        all_logits = []
-
+        pooled_outputs = []
         for input_ids, attention_mask in zip(all_input_ids, all_attention_masks):
             outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
-            pooled_output = outputs.pooler_output
+            pooled_outputs.append(outputs.pooler_output)
 
-            if hasattr(self, 'classifiers'):
-                logits = [classifier(pooled_output) for classifier in self.classifiers]
-            else:
-                logits = self.classifier(pooled_output)
-
-            all_logits.append(logits)
+        if hasattr(self, 'classifiers'):
+            all_logits = [torch.stack([classifier(pooled_output) for pooled_output in pooled_outputs], dim=0) for classifier in self.classifiers]
+        else:
+            all_logits = torch.stack([self.classifier(pooled_output) for pooled_output in pooled_outputs], dim=0)
 
         return all_logits
+
 
         
 class BertFineTuneMedium(nn.Module):
@@ -167,17 +157,15 @@ class BertFineTuneMedium(nn.Module):
             self.classifier = nn.Linear(512, num_labels[0])
 
     def forward(self, all_input_ids, all_attention_masks):
-        all_logits = []
-
+        pooled_outputs = []
         for input_ids, attention_mask in zip(all_input_ids, all_attention_masks):
             outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
-            pooled_output = outputs.pooler_output
+            pooled_outputs.append(outputs.pooler_output)
 
-            if hasattr(self, 'classifiers'):
-                logits = [classifier(pooled_output) for classifier in self.classifiers]
-            else:
-                logits = self.classifier(pooled_output)
-
-            all_logits.append(logits)
+        if hasattr(self, 'classifiers'):
+            all_logits = [torch.stack([classifier(pooled_output) for pooled_output in pooled_outputs], dim=0) for classifier in self.classifiers]
+        else:
+            all_logits = torch.stack([self.classifier(pooled_output) for pooled_output in pooled_outputs], dim=0)
 
         return all_logits
+
