@@ -6,7 +6,7 @@ with open('requirements.txt') as f:
 
 setup(
     name='FallingPlanet',
-    version='0.2.0',
+    version='0.2.1',
     packages=find_packages(),
     description='A PyTorch-based toolkit for machine learning and NLP tasks',
     long_description=open('README.md').read(),
