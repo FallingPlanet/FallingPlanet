@@ -1,12 +1,12 @@
 import torch
 import torch.nn as nn
-from transformers import DeitModel
+from transformers import DeiTModel
 from torchvision import transforms
 
-class DeitFIneTuneTiny(nn.Module):
+class DeitFineTuneTiny(nn.Module):
     def __init__(self, num_labels, from_saved_weights = None, num_tasks=1, image_size= 224, **kwargs):
-        super(DeitFIneTuneTiny, self).__init__()
-        self.beit = DeitModel.from_pretrained('facebook/deit-tiny-patch16-224')
+        super(DeitFineTuneTiny, self).__init__()
+        self.beit = DeiTModel.from_pretrained('facebook/deit-tiny-patch16-224')
         
         
         if from_saved_weights:

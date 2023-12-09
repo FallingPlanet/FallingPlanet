@@ -1,6 +1,6 @@
 Metadata-Version: 2.1
 Name: FallingPlanet
-Version: 0.2.2
+Version: 0.2.3
 Summary: A PyTorch-based toolkit for machine learning and NLP tasks
 Home-page: https://github.com/FallingPlanet/FallingPlanet
 Author: William Stigall
