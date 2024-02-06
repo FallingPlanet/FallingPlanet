@@ -1,22 +1,34 @@
 import torch
 import torch.nn as nn
-from transformers import ViTModel, ViTFeatureExtractor, DeiTForImageClassification
+from transformers import ViTModel, ViTFeatureExtractor, DeiTForImageClassification, BertModel, DeiTModel
 from AuTransformer import FPATF_Tiny
 from BertFineTuneForSequenceClassification import BertFineTuneTiny
+from FallingPlanet.orbit.utils import Tokenizers
 
 class HydraTiny(nn.Module):
-    def __init__(self, num_classes, vision_model_name, text_model_config, audio_model_config):
+    def __init__(self, num_classes, **kwargs):
         super(HydraTiny, self).__init__()
+        text_dict = None
+        vision_dict = None
+        audio_dict = None
         
         # Assuming the vision model is a Vision Transformer
-        self.vision_model = ViTModel.from_pretrained(vision_model_name)
+        self.vision_model = ViTModel.from_pretrained('facebook/deit-tiny-patch16-224')
+        v_classifier = nn.Sequential(
+            nn.Linear(192, 512),
+            nn.ReLU(),
+            nn.Linear(512, 256),
+            nn.ReLU(),
+            nn.Linear(256,num_classes)
+            
+        )
         
         
         # Text model placeholder initialization (adjust with actual model)
-        self.text_model = ...  # Initialize with text_model_config
+        self.text_model = BertModel.from_pretrained("prajjwal1/bert-tiny")
         
         # Audio model (FPATF_Tiny) initialization
-        self.audio_model = FPATF_Tiny(**audio_model_config)
+        self.audio_model = FPATF_Tiny()
         
         
         # Fusion mechanism (adjust dimensions as needed)
@@ -34,6 +46,7 @@ class HydraTiny(nn.Module):
         self.num_classes = num_classes
 
     def forward(self, vision_inputs, text_input, audio_input):
+        
         # Process vision inputs (a list of frames)
         
         vision_logits_list = [self.vision_model(pixel_values=features).logits for features in vision_inputs]
@@ -41,9 +54,9 @@ class HydraTiny(nn.Module):
         # Average the logits from the vision model frames
         vision_logits = torch.mean(torch.stack(vision_logits_list), dim=0)
         
-        # Process text input
+        input_ids, attention_masks = Tokenizers.BertTiny_tokenize(text_input, max_lenght = 256)
         # Assuming text_model has a method .forward() or equivalent that takes text_input
-        text_logits = self.text_model(text_input)
+        text_logits = self.text_model(input_ids, attention_masks)
         
         # Process audio input (MFCCs)
         # Assuming audio_model takes MFCCs directly
