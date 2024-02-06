@@ -8,10 +8,11 @@ from FallingPlanet.orbit.utils import Tokenizers
 class HydraTiny(nn.Module):
     def __init__(self, num_classes, **kwargs):
         super(HydraTiny, self).__init__()
-        text_dict = None
-        vision_dict = None
-        audio_dict = None
-        
+        text_dict = kwargs.get('text_model_dict',False)
+        vision_dict = kwargs.get('vision_model_dict',False)
+        audio_dict = kwargs.get('audio_model_dict',False)
+        requires_grad = kwargs.get('requires_grad',False)
+
         # Assuming the vision model is a Vision Transformer
         self.vision_model = ViTModel.from_pretrained('facebook/deit-tiny-patch16-224')
         v_classifier = nn.Sequential(
@@ -29,7 +30,14 @@ class HydraTiny(nn.Module):
         
         # Audio model (FPATF_Tiny) initialization
         self.audio_model = FPATF_Tiny()
+        if requires_grad == False:
+            self.audio_model.parameters(requires_grad=False)
+            self.vision_model.parameters(requires_grad=False)
+            self.text_model.parameters(requires_grad=False)
+        if text_dict != False:
+            torch.load(text_dict)
         
+
         
         # Fusion mechanism (adjust dimensions as needed)
         self.fusion_layer = nn.Linear(128+128+256, num_classes)  # Update based on your fusion strategy
@@ -48,6 +56,9 @@ class HydraTiny(nn.Module):
     def forward(self, vision_inputs, text_input, audio_input):
         
         # Process vision inputs (a list of frames)
+        self.audio_model.eval()
+        self.text_model.eval()
+        self.vision_model.eval()
         
         vision_logits_list = [self.vision_model(pixel_values=features).logits for features in vision_inputs]
         
