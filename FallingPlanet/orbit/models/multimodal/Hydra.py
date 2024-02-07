@@ -4,6 +4,7 @@ from transformers import ViTModel, ViTFeatureExtractor, DeiTForImageClassificati
 from AuTransformer import FPATF_Tiny
 from BertFineTuneForSequenceClassification import BertFineTuneTiny
 from FallingPlanet.orbit.utils import Tokenizers
+import torch.nn.functional as F
 
 class HydraTiny(nn.Module):
     def __init__(self, num_classes, **kwargs):
@@ -34,18 +35,22 @@ class HydraTiny(nn.Module):
             self.audio_model.parameters(requires_grad=False)
             self.vision_model.parameters(requires_grad=False)
             self.text_model.parameters(requires_grad=False)
+            # Process vision inputs (a list of frames)
+            self.audio_model.eval()
+            self.text_model.eval()
+            self.vision_model.eval()
         if text_dict != False:
             torch.load(text_dict)
         
 
         
         # Fusion mechanism (adjust dimensions as needed)
-        self.fusion_layer = nn.Linear(128+128+256, num_classes)  # Update based on your fusion strategy
-        f_transformer_layer_1 = nn.TransformerEncoderLayer(d_model = 512,nhead=8, dim_feedforward=1024, dropout = .01)
+        self.fusion_layer = FusionLayer(unified_class_dim=num_classes)
+        f_transformer_layer_1 = nn.TransformerEncoderLayer(d_model = 512,nhead=9, dim_feedforward=1024, dropout = .01)
         self.f_transformer_1 = nn.TransformerEncoder(f_transformer_layer_1, num_layers = 6)
         self.f_layer_norm = nn.layer_norm = nn.LayerNorm(512)
         self.f_fc = nn.Linear(512,256)
-        f_transformer_layer_2 = nn.TransformerEncoderLayer(d_model = 256, nhead=4, dim_feedforward = 512, dropout = .01)
+        f_transformer_layer_2 = nn.TransformerEncoderLayer(d_model = 256, nhead=9, dim_feedforward = 512, dropout = .01)
         self.f_transformer_2 = nn.TransformerEncoder(f_transformer_layer_2, num_layers = 2)
         self.f_fc2 = nn.Linear(256,128)
         self.f_fc3 = nn.Linear(128, num_classes)
@@ -55,10 +60,7 @@ class HydraTiny(nn.Module):
 
     def forward(self, vision_inputs, text_input, audio_input):
         
-        # Process vision inputs (a list of frames)
-        self.audio_model.eval()
-        self.text_model.eval()
-        self.vision_model.eval()
+        
         
         vision_logits_list = [self.vision_model(pixel_values=features).logits for features in vision_inputs]
         
@@ -69,16 +71,33 @@ class HydraTiny(nn.Module):
         # Assuming text_model has a method .forward() or equivalent that takes text_input
         text_logits = self.text_model(input_ids, attention_masks)
         
+        
         # Process audio input (MFCCs)
         # Assuming audio_model takes MFCCs directly
         audio_logits = self.audio_model(audio_input)
         
         # Fusion of model outputs
         # Example concatenates logits; modify based on actual output shapes and fusion strategy
-        combined_features = torch.cat((vision_logits, text_logits, audio_logits), dim=-1)
-        final_output = self.fusion_layer(combined_features)
+        fused_features = self.fusion_layer(vision_logits,text_logits,audio_logits)
         
-        return final_output
+        x = self.f_transformer_1(fused_features)
+        
+        return output
 
+class FusionLayer(nn.Module):
+    def __init__(self, input_dims, unified_class_dim):
+        super(FusionLayer, self).__init__()
+        
+        self.projection_layer = nn.ModuleList(
+            nn.Linear(dim, unified_class_dim) for dim in input_dims
+        )
+        
+    def fuse_and_pad(self, *inputs):
+        # Example padding with zeros to match the largest dimension (unified_class_dim)
+        padded_inputs = [F.pad(input, (0, self.unified_dim - input.size(1)), "constnat", 0) for input in inputs]
+        # Concatenate along the feature dimension
+        fused = torch.cat(padded_inputs, dim=1)
+        
+        return fused
 
-    
+        
