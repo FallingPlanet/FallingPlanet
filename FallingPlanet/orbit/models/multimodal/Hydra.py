@@ -46,11 +46,11 @@ class HydraTiny(nn.Module):
         
         # Fusion mechanism (adjust dimensions as needed)
         self.fusion_layer = FusionLayer(unified_class_dim=num_classes)
-        f_transformer_layer_1 = nn.TransformerEncoderLayer(d_model = 512,nhead=9, dim_feedforward=1024, dropout = .01)
+        f_transformer_layer_1 = nn.TransformerEncoderLayer(d_model = 512,nhead=8, dim_feedforward=1024, dropout = .01)
         self.f_transformer_1 = nn.TransformerEncoder(f_transformer_layer_1, num_layers = 6)
         self.f_layer_norm = nn.layer_norm = nn.LayerNorm(512)
         self.f_fc = nn.Linear(512,256)
-        f_transformer_layer_2 = nn.TransformerEncoderLayer(d_model = 256, nhead=9, dim_feedforward = 512, dropout = .01)
+        f_transformer_layer_2 = nn.TransformerEncoderLayer(d_model = 256, nhead=8, dim_feedforward = 512, dropout = .01)
         self.f_transformer_2 = nn.TransformerEncoder(f_transformer_layer_2, num_layers = 2)
         self.f_fc2 = nn.Linear(256,128)
         self.f_fc3 = nn.Linear(128, num_classes)
@@ -59,45 +59,65 @@ class HydraTiny(nn.Module):
         self.num_classes = num_classes
 
     def forward(self, vision_inputs, text_input, audio_input):
-        
-        
-        
-        vision_logits_list = [self.vision_model(pixel_values=features).logits for features in vision_inputs]
-        
-        # Average the logits from the vision model frames
-        vision_logits = torch.mean(torch.stack(vision_logits_list), dim=0)
-        
-        input_ids, attention_masks = Tokenizers.BertTiny_tokenize(text_input, max_lenght = 256)
-        # Assuming text_model has a method .forward() or equivalent that takes text_input
-        text_logits = self.text_model(input_ids, attention_masks)
-        
-        
-        # Process audio input (MFCCs)
-        # Assuming audio_model takes MFCCs directly
+        # Process vision inputs
+        vision_features = [self.vision_model(pixel_values=frame).last_hidden_state for frame in vision_inputs]
+        vision_logits = torch.mean(torch.stack(vision_features), dim=0)
+
+        # Process text inputs
+        input_ids, attention_masks = Tokenizers.BertTiny_tokenize(text_input, max_length=256)
+        text_outputs = self.text_model(input_ids=input_ids, attention_mask=attention_masks)
+        text_logits = text_outputs.pooler_output  # Assuming using pooler_output as logits
+
+        # Process audio inputs
         audio_logits = self.audio_model(audio_input)
-        
-        # Fusion of model outputs
-        # Example concatenates logits; modify based on actual output shapes and fusion strategy
-        fused_features = self.fusion_layer(vision_logits,text_logits,audio_logits)
-        
+
+        # Fuse the outputs
+        fused_features = self.fusion_layer(vision_logits, text_logits, audio_logits)
+
+        # Pass through the transformer and linear layers
         x = self.f_transformer_1(fused_features)
-        
+        x = self.f_layer_norm(x)
+        x = F.relu(self.f_fc(x))
+        x = self.f_transformer_2(x)
+        x = F.relu(self.f_fc2(x))
+        output = self.f_fc3(x)
+
         return output
 
+
 class FusionLayer(nn.Module):
-    def __init__(self, input_dims, unified_class_dim):
+    def __init__(self, vision_dim, text_dim, audio_dim, unified_dim):
         super(FusionLayer, self).__init__()
-        
-        self.projection_layer = nn.ModuleList(
-            nn.Linear(dim, unified_class_dim) for dim in input_dims
-        )
-        
-    def fuse_and_pad(self, *inputs):
-        # Example padding with zeros to match the largest dimension (unified_class_dim)
-        padded_inputs = [F.pad(input, (0, self.unified_dim - input.size(1)), "constnat", 0) for input in inputs]
+        self.unified_dim = unified_dim
+        # Create projection layers for each modality to project them to a unified dimension
+        self.vision_projection = nn.Linear(vision_dim, unified_dim)
+        self.text_projection = nn.Linear(text_dim, unified_dim)
+        self.audio_projection = nn.Linear(audio_dim, unified_dim)
+
+    def forward(self, vision_logits, text_logits, audio_logits):
+        # Project each modality's output to the unified dimension
+        vision_projected = self.vision_projection(vision_logits)
+        text_projected = self.text_projection(text_logits)
+        audio_projected = self.audio_projection(audio_logits)
+
         # Concatenate along the feature dimension
-        fused = torch.cat(padded_inputs, dim=1)
-        
+        fused = torch.cat([vision_projected, text_projected, audio_projected], dim=1)
         return fused
 
+class Penalty_Layer(nn.Module):
+    def __init__(self):
+        super(Penalty_Layer, self).__init__()
+        
+    def forward(self, vision_logits, text_logits, audio_logits):
+        
+        vision_probs =  F.softmax(vision_logits,dim=1)
+        text_probs = F.softmax(text_logits,dim=1)
+        audio_probs = F.softmax(audio_logits,dim=1)
+        
+        v_top_prob, v_top_class = torch.max(vision_probs, dim =  1)
+        v_probs_copy = vision_probs.clone()
+        v_probs_copy[0, v_top_class] = 0
+        v_next_prob, v_next_class = torch.max(v_probs_copy, dim = 1)
+        
+        
         
