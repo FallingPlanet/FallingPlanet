@@ -109,10 +109,11 @@ class Penalty_Layer(nn.Module):
         super(Penalty_Layer, self).__init__()
         
     def forward(self, vision_logits, text_logits, audio_logits):
+        probs = [
+        F.softmax(vision_logits,dim=1) if vision_logits is not None else None,
+        F.softmax(text_logits,dim=1) if text_logits is not None else None,
+        F.softmax(audio_logits,dim=1) if audio_logits is not None else None]
         
-        vision_probs =  [F.softmax(vision_logits,dim=1) if vision_logits is not None else None]
-        text_probs = [F.softmax(text_logits,dim=1) if text_logits is not None else None]
-        audio_probs = [F.softmax(audio_logits,dim=1) if audio_logits is not None else None]
         
         v_top_prob, v_top_class = torch.max(vision_probs, dim =  1)
         v_probs_copy = vision_probs.clone()
