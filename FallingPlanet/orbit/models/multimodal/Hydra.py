@@ -102,68 +102,7 @@ class FusionLayer(nn.Module):
         fused = torch.cat([vision_projected, text_projected, audio_projected], dim=1)
         return fused
 
-"""class Penalty_Layer(nn.Module):
-    def __init__(self):
-        super(Penalty_Layer, self).__init__()
-        
-    def forward(self, vision_logits, text_logits, audio_logits):
-        probs = [
-        F.softmax(vision_logits,dim=1) if vision_logits is not None else None,
-        F.softmax(text_logits,dim=1) if text_logits is not None else None,
-        F.softmax(audio_logits,dim=1) if audio_logits is not None else None]
-        
-        # Extract top class probabilities and indices for each modality
-        
-        top_2_probs = []
-        top_2_classes = []
-        top_classes = []
-        next_classes = []
-        penalty = 0
-        for prob in probs:
-            if prob is not None:
-                
-                top_2_prob, top_2_class = torch.topk(prob,2,dim=1)
-                
-                top_2_probs.append(top_2_prob)
-                top_2_classes.append(top_2_class)
-                
-                top_classes.append(top_2_class[:, 0])
-                next_classes.append(top_2_class[:,1])
-            else:
-               
-                top_2_classes.append(None)
-                top_2_probs.append(None)
-                
-                        # Example conditional checks for vision modality compared to text and audio
-        if top_classes[0] is not None:
-            if top_classes[1] is not None and not torch.equal(top_classes[0], top_classes[1]):
-                # Vision top class does not match Text top class
-                if top_classes[2] is not None and torch.equal(top_classes[0],top_classes[2]):
-                    penalty=0
-                if top_classes[0]
-    
-            if top_classes[2] is not None and not torch.equal(top_classes[0], top_classes[2]):
-                # Vision top class does not match Audio top class
-        
-        #this condition is technically impossible
-        if top_classes[1] is not None:  # Check if Text modality is present
-            if top_classes[0] is not None and not torch.equal(top_classes[1], top_classes[0]):
-                # Text top class does not match Vision top class
-                # Apply penalty or specific logic here
-                
-            if top_classes[2] is not None and not torch.equal(top_classes[1], top_classes[2]):
-                # Text top class does not match Audio top class
-                # Apply penalty or specific logic here
 
-        if top_classes[2] is not None:  # Check if Audio modality is present
-            if top_classes[0] is not None and not torch.equal(top_classes[2], top_classes[0]):
-                # Audio top class does not match Vision top class
-                # Apply penalty or specific logic here
-                
-            if top_classes[1] is not None and not torch.equal(top_classes[2], top_classes[1]):
-                # Audio top class does not match Text top class
-                # Apply penalty or specific logic here
-"""
         
         
                 
@@ -188,3 +127,68 @@ trainable_params = count_trainable_parameters(model)
 print(f"Total parameters: {total_params}")
 print(f"Trainable parameters: {trainable_params}")
        
+       
+       
+"""class Penalty_Layer(nn.Module):
+def __init__(self):
+    super(Penalty_Layer, self).__init__()
+    
+def forward(self, vision_logits, text_logits, audio_logits):
+    probs = [
+    F.softmax(vision_logits,dim=1) if vision_logits is not None else None,
+    F.softmax(text_logits,dim=1) if text_logits is not None else None,
+    F.softmax(audio_logits,dim=1) if audio_logits is not None else None]
+    
+    # Extract top class probabilities and indices for each modality
+    
+    top_2_probs = []
+    top_2_classes = []
+    top_classes = []
+    next_classes = []
+    penalty = 0
+    for prob in probs:
+        if prob is not None:
+            
+            top_2_prob, top_2_class = torch.topk(prob,2,dim=1)
+            
+            top_2_probs.append(top_2_prob)
+            top_2_classes.append(top_2_class)
+            
+            top_classes.append(top_2_class[:, 0])
+            next_classes.append(top_2_class[:,1])
+        else:
+            
+            top_2_classes.append(None)
+            top_2_probs.append(None)
+            
+                    # Example conditional checks for vision modality compared to text and audio
+    if top_classes[0] is not None:
+        if top_classes[1] is not None and not torch.equal(top_classes[0], top_classes[1]):
+            # Vision top class does not match Text top class
+            if top_classes[2] is not None and torch.equal(top_classes[0],top_classes[2]):
+                penalty=0
+            if top_classes[0]
+
+        if top_classes[2] is not None and not torch.equal(top_classes[0], top_classes[2]):
+            # Vision top class does not match Audio top class
+    
+    #this condition is technically impossible
+    if top_classes[1] is not None:  # Check if Text modality is present
+        if top_classes[0] is not None and not torch.equal(top_classes[1], top_classes[0]):
+            # Text top class does not match Vision top class
+            # Apply penalty or specific logic here
+            
+        if top_classes[2] is not None and not torch.equal(top_classes[1], top_classes[2]):
+            # Text top class does not match Audio top class
+            # Apply penalty or specific logic here
+
+    if top_classes[2] is not None:  # Check if Audio modality is present
+        if top_classes[0] is not None and not torch.equal(top_classes[2], top_classes[0]):
+            # Audio top class does not match Vision top class
+            # Apply penalty or specific logic here
+            
+        if top_classes[1] is not None and not torch.equal(top_classes[2], top_classes[1]):
+            # Audio top class does not match Text top class
+            # Apply penalty or specific logic here
+"""
+    
