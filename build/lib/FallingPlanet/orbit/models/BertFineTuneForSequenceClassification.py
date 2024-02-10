@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch
 
 class BertFineTuneBase(nn.Module):
-    def __init__(self, num_labels, from_saved_weights=None, num_tasks=1, **kwargs):
+    def __init__(self, num_labels, from_saved_weights = None, num_tasks=1, **kwargs):
         super(BertFineTuneBase, self).__init__()
         self.bert = BertModel.from_pretrained("bert-base-cased")
         

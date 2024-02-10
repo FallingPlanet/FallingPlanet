@@ -1,8 +1,8 @@
 import torch
 import torch.nn as nn
 from transformers import ViTModel, ViTFeatureExtractor, DeiTForImageClassification, BertModel, DeiTModel
-from AuTransformer import FPATF_Tiny
-from BertFineTuneForSequenceClassification import BertFineTuneTiny
+from FallingPlanet.orbit.models.AuTransformer import FPATF_Tiny
+from FallingPlanet.orbit.models.BertFineTuneForSequenceClassification import BertFineTuneTiny
 from FallingPlanet.orbit.utils import Tokenizers
 import torch.nn.functional as F
 
@@ -30,11 +30,9 @@ class HydraTiny(nn.Module):
         self.text_model = BertModel.from_pretrained("prajjwal1/bert-tiny")
         
         # Audio model (FPATF_Tiny) initialization
-        self.audio_model = FPATF_Tiny()
+        self.audio_model = FPATF_Tiny(target_channels=4,num_classes=10)
         if requires_grad == False:
-            self.audio_model.parameters(requires_grad=False)
-            self.vision_model.parameters(requires_grad=False)
-            self.text_model.parameters(requires_grad=False)
+            
             # Process vision inputs (a list of frames)
             self.audio_model.eval()
             self.text_model.eval()
@@ -45,7 +43,7 @@ class HydraTiny(nn.Module):
 
         
         # Fusion mechanism (adjust dimensions as needed)
-        self.fusion_layer = FusionLayer(unified_class_dim=num_classes)
+        self.fusion_layer = FusionLayer(vision_dim=7, text_dim = 9, audio_dim = 8, unified_dim=num_classes)
         f_transformer_layer_1 = nn.TransformerEncoderLayer(d_model = 512,nhead=8, dim_feedforward=1024, dropout = .01)
         self.f_transformer_1 = nn.TransformerEncoder(f_transformer_layer_1, num_layers = 6)
         self.f_layer_norm = nn.layer_norm = nn.LayerNorm(512)
@@ -104,7 +102,7 @@ class FusionLayer(nn.Module):
         fused = torch.cat([vision_projected, text_projected, audio_projected], dim=1)
         return fused
 
-class Penalty_Layer(nn.Module):
+"""class Penalty_Layer(nn.Module):
     def __init__(self):
         super(Penalty_Layer, self).__init__()
         
@@ -114,11 +112,79 @@ class Penalty_Layer(nn.Module):
         F.softmax(text_logits,dim=1) if text_logits is not None else None,
         F.softmax(audio_logits,dim=1) if audio_logits is not None else None]
         
+        # Extract top class probabilities and indices for each modality
         
-        v_top_prob, v_top_class = torch.max(vision_probs, dim =  1)
-        v_probs_copy = vision_probs.clone()
-        v_probs_copy[0, v_top_class] = 0
-        v_next_prob, v_next_class = torch.max(v_probs_copy, dim = 1)
+        top_2_probs = []
+        top_2_classes = []
+        top_classes = []
+        next_classes = []
+        penalty = 0
+        for prob in probs:
+            if prob is not None:
+                
+                top_2_prob, top_2_class = torch.topk(prob,2,dim=1)
+                
+                top_2_probs.append(top_2_prob)
+                top_2_classes.append(top_2_class)
+                
+                top_classes.append(top_2_class[:, 0])
+                next_classes.append(top_2_class[:,1])
+            else:
+               
+                top_2_classes.append(None)
+                top_2_probs.append(None)
+                
+                        # Example conditional checks for vision modality compared to text and audio
+        if top_classes[0] is not None:
+            if top_classes[1] is not None and not torch.equal(top_classes[0], top_classes[1]):
+                # Vision top class does not match Text top class
+                if top_classes[2] is not None and torch.equal(top_classes[0],top_classes[2]):
+                    penalty=0
+                if top_classes[0]
+    
+            if top_classes[2] is not None and not torch.equal(top_classes[0], top_classes[2]):
+                # Vision top class does not match Audio top class
+        
+        #this condition is technically impossible
+        if top_classes[1] is not None:  # Check if Text modality is present
+            if top_classes[0] is not None and not torch.equal(top_classes[1], top_classes[0]):
+                # Text top class does not match Vision top class
+                # Apply penalty or specific logic here
+                
+            if top_classes[2] is not None and not torch.equal(top_classes[1], top_classes[2]):
+                # Text top class does not match Audio top class
+                # Apply penalty or specific logic here
+
+        if top_classes[2] is not None:  # Check if Audio modality is present
+            if top_classes[0] is not None and not torch.equal(top_classes[2], top_classes[0]):
+                # Audio top class does not match Vision top class
+                # Apply penalty or specific logic here
+                
+            if top_classes[1] is not None and not torch.equal(top_classes[2], top_classes[1]):
+                # Audio top class does not match Text top class
+                # Apply penalty or specific logic here
+"""
+        
+        
+                
+         
+                    
         
         
         
+def count_parameters(model):
+    return sum(p.numel() for p in model.parameters())
+
+def count_trainable_parameters(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+# Instantiate the model
+model = HydraTiny(num_classes=9)
+
+# Calculate total and trainable parameters
+total_params = count_parameters(model)
+trainable_params = count_trainable_parameters(model)
+
+print(f"Total parameters: {total_params}")
+print(f"Trainable parameters: {trainable_params}")
+       
