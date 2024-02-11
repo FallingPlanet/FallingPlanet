@@ -11,6 +11,9 @@ FallingPlanet/orbit/models/AuTransformer.py
 FallingPlanet/orbit/models/BertFineTuneForSequenceClassification.py
 FallingPlanet/orbit/models/DeiTFineTuneForImageClassification.py
 FallingPlanet/orbit/models/__init__.py
+FallingPlanet/orbit/models/multimodal/Chimera.py
+FallingPlanet/orbit/models/multimodal/Hydra.py
+FallingPlanet/orbit/models/multimodal/__init__.py
 FallingPlanet/orbit/utils/Metrics.py
 FallingPlanet/orbit/utils/Tokenizers.py
 FallingPlanet/orbit/utils/__init__.py
