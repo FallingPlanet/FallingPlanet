@@ -7,9 +7,12 @@ FallingPlanet.egg-info/dependency_links.txt
 FallingPlanet.egg-info/requires.txt
 FallingPlanet.egg-info/top_level.txt
 FallingPlanet/orbit/__init__.py
+FallingPlanet/orbit/Agents/DRLAgent.py
+FallingPlanet/orbit/Agents/__init__.py
 FallingPlanet/orbit/models/AuTransformer.py
 FallingPlanet/orbit/models/BertFineTuneForSequenceClassification.py
 FallingPlanet/orbit/models/DeiTFineTuneForImageClassification.py
+FallingPlanet/orbit/models/QNetworks.py
 FallingPlanet/orbit/models/__init__.py
 FallingPlanet/orbit/models/multimodal/Chimera.py
 FallingPlanet/orbit/models/multimodal/Hydra.py
