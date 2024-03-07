@@ -11,7 +11,8 @@ import torch.nn.functional as F
 
 class Agent:
     def __init__(self, env_name, policy_model, target_model, lr, gamma, epsilon_start, epsilon_end, n_episodes, memory_size,update_target_every):
-        self.env = gym.make(env_name, render_mode=None)
+        self.env = gym.make(env_name, render_mode="human")
+        self.env.metadata['render_fps']=120
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         # Models
@@ -41,13 +42,14 @@ class Agent:
             "env_times": []
         }
 
-        # Preprocessing Transforms
+        # Define preprocessing pipeline
         self.transform = transforms.Compose([
-            transforms.ToPILImage(),
-            transforms.Grayscale(num_output_channels=1),
-            transforms.Resize((84, 84)),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.5], std=[0.5])
+            transforms.ToPILImage(),  # Convert numpy array to PIL Image
+            transforms.Grayscale(num_output_channels=1),  # Convert to grayscale
+            transforms.Resize((110, 84)),  # Resize to intermediate size
+            transforms.CenterCrop(84),  # Crop the center 84x84 portion
+            transforms.ToTensor(),  # Convert to tensor
+            transforms.Normalize(mean=[0.5], std=[0.5])  # Normalize pixel values
         ])
 
     def update_target_network(self):
@@ -59,33 +61,28 @@ class Agent:
         self.epsilon = max(self.epsilon_end, self.epsilon * self.epsilon_decay)
 
     def preprocess_state(self, state):
-        # Check if state is a tuple and has at least one element (the frame data)
-        if isinstance(state, tuple) and len(state) > 0:
-            # Extract the frame data (assuming it's the first element of the tuple)
-            frame_data = state[0]
-            
-            # Now, preprocess frame_data as needed (e.g., resizing, grayscaling)
-            if isinstance(frame_data, np.ndarray):
-                processed_frames = []
-                # Assuming frame_data is a single frame or stacked frames along the last dimension
-                num_frames = frame_data.shape[-1] // 3  # Assuming 3 channels per frame
-                
-                for i in range(num_frames):
-                    frame = frame_data[:, :, i*3:(i+1)*3]  # Extract ith frame
-                    frame = self.transform(frame)  # Apply transformations defined in self.transform
-                    processed_frames.append(frame)
-                
-                # Stack processed frames along the channel dimension to get [C, H, W]
-                state_tensor = torch.cat(processed_frames, dim=0)
-            else:
-                raise TypeError("Frame data is not in the expected format.")
-            
-            # Add a batch dimension [B, C, H, W]
-            state_tensor = state_tensor.unsqueeze(0).to(self.device)
-            print(state_tensor.shape)
-            return state_tensor
-        else:
-            raise TypeError("State is not in the expected format.")
+        # Ensure the state is in an expected container format (e.g., numpy array or a tuple containing a numpy array)
+        if not isinstance(state, np.ndarray) and (not isinstance(state, tuple) or not isinstance(state[0], np.ndarray)):
+            raise TypeError("State must be a numpy array or a tuple containing a numpy array.")
+
+        # Extract frame data from state if it's in a tuple
+        frame_data = state[0] if isinstance(state, tuple) else state
+
+        # Verify frame data is a numpy array with the expected shape (H, W, C)
+        if not (isinstance(frame_data, np.ndarray) and len(frame_data.shape) == 3 and frame_data.shape[2] == 3):
+            raise TypeError("Frame data must be a numpy array with shape [Height, Width, Channels=3].")
+
+        # Convert frame data to grayscale and ensure it's in uint8 format for PIL compatibility
+        frame_data = np.mean(frame_data, axis=-1).astype(np.uint8)
+
+        # Convert frame_data to PIL Image, apply transformations, and convert back to tensor
+        state_tensor = self.transform(frame_data)
+
+        # Add a batch dimension and transfer to the correct device
+        state_tensor = state_tensor.unsqueeze(0).to(self.device)
+
+        return state_tensor
+
 
 
 
@@ -109,26 +106,25 @@ class Agent:
 
     def replay(self, batch_size):
         if len(self.memory) < batch_size:
-            return  # Not enough samples to perform a replay
+            return
 
         minibatch = random.sample(self.memory, batch_size)
         states, actions, rewards, next_states, dones = zip(*minibatch)
 
-        states = torch.tensor(states, dtype=torch.float32).to(self.device)
-        actions = torch.tensor(actions, dtype=torch.long).to(self.device)
-        rewards = torch.tensor(rewards, dtype=torch.float32).to(self.device)
-        next_states = torch.tensor(next_states, dtype=torch.float32).to(self.device)
-        dones = torch.tensor(dones, dtype=torch.float32).to(self.device)
+        states_processed = torch.cat([self.preprocess_state(state) for state in states])
+        next_states_processed = torch.cat([self.preprocess_state(next_state) for next_state in next_states])
 
-        # Predicted Q-values for the current states
-        current_q_values = self.policy_model(states).gather(1, actions.unsqueeze(1)).squeeze(1)
 
-        # Compute the maximum Q-values for the next states from the target network
-        max_next_q_values = self.target_model(next_states).detach().max(1)[0]
-        max_next_q_values[dones] = 0.0  # Zero out Q-values for terminal states
+        actions_t = torch.tensor(actions, dtype=torch.long).to(self.device)
+        rewards_t = torch.tensor(rewards, dtype=torch.float32).to(self.device)
+        dones_t = torch.tensor(dones, dtype=torch.bool).to(self.device)
+
+        current_q_values = self.policy_model(states_processed).gather(1, actions_t.unsqueeze(1)).squeeze(1)
+        next_q_values = self.target_model(next_states_processed).detach().max(1)[0]
+        next_q_values[dones_t] = 0.0
 
         # Compute target Q-values
-        target_q_values = rewards + self.gamma * max_next_q_values
+        target_q_values = rewards_t + self.gamma * next_q_values
 
         # Compute loss
         loss = F.mse_loss(current_q_values, target_q_values)
@@ -137,6 +133,8 @@ class Agent:
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
+
+
 
     def update_epsilon(self):
         self.epsilon = max(self.epsilon_end, self.epsilon_decay * self.epsilon)  # Decay epsilon
@@ -150,6 +148,7 @@ class Agent:
             while not terminated:
                 action = self.act(state)
                 next_state, reward, terminated, truncated, info = self.env.step(action)
+                
                 self.remember(state, action, reward, next_state, terminated or truncated)
                 state = next_state
                 total_reward += reward
@@ -163,7 +162,10 @@ class Agent:
             # Periodically update target network
             if episode % self.UPDATE_TARGET_EVERY == 0:
                 self.update_target_network()
+
+            # Ensure this print statement is within the for-loop
             print(f"Episode: {episode+1}, Total reward: {total_reward}, Epsilon: {self.epsilon}")
+
 
 
 # Initialize environment and model
