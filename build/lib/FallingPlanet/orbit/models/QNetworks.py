@@ -2,22 +2,23 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
-
 class DCQN(nn.Module):
     def __init__(self, n_observation, n_actions):
         super(DCQN, self).__init__()
-        self.conv1 = nn.Conv2d(in_channels=n_observation, out_channels=32, kernel_size=8, stride=4)
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=4, stride=2)
-        self.conv3 = nn.Conv2d(64, 64, kernel_size=3, stride=1)
+        # Increase the number of channels in each layer to double the original capacity
+        self.conv1 = nn.Conv2d(in_channels=n_observation, out_channels=32*2, kernel_size=8, stride=4)  # 64 channels
+        self.conv2 = nn.Conv2d(32*2, 64*2, kernel_size=4, stride=2)  # 128 channels
+        self.conv3 = nn.Conv2d(64*2, 64*2, kernel_size=3, stride=1)  # 128 channels
 
         # Use a dummy input to pass through the conv layers to calculate the output size
         dummy_input = torch.zeros(1, n_observation, 84, 84)
         output_size = self._get_conv_output(dummy_input)
 
-        # Fully connected layers
-        self.fc = nn.Linear(output_size, 512)
-        self.out = nn.Linear(512, n_actions)
+        # Increase the size of the fully connected layers accordingly
+        self.fc = nn.Linear(output_size, 512*2)  # Increased the number of neurons in the fc layer to 1024
+        self.fc2 = nn.Linear(512*2,512)
+        self.fc3 = nn.Linear(512,256)
+        self.out = nn.Linear(256, n_actions)
 
     def _get_conv_output(self, shape):
         with torch.no_grad():
@@ -36,34 +37,17 @@ class DCQN(nn.Module):
         x = self._forward_features(x)
         x = x.view(x.size(0), -1)  # Flatten the tensor
         x = F.relu(self.fc(x))
+        x = F.relu(self.fc2(x))
+        x = F.relu(self.fc3(x))
+        
         x = self.out(x)
         return x
 
+
+
+
         
-    def forward(self, x):
-        """
-        Defines the forward pass of the model.
-        
-        Parameters:
-        - x (torch.Tensor): The input tensor of shape [batch_size, n_observation, 84, 84]
-        
-        Returns:
-        - torch.Tensor: The output tensor of shape [batch_size, n_actions]
-        """
-        # Apply consecutive convolutional layers with ReLU activation
-        x = F.relu(self.conv1(x))
-        x = F.relu(self.conv2(x))
-        x = F.relu(self.conv3(x))
-        
-        # Flatten the output for the fully connected layer
-        x = x.view(x.size(0), -1)
-        
-        # Apply the fully connected layer with ReLU activation
-        x = F.relu(self.fc(x))
-        
-        # Compute the output (no activation function like softmax since we use Q-values directly)
-        x = self.out(x)
-        return x
+
 
 
 
@@ -115,7 +99,7 @@ dtqn_model = DTQN(num_actions=n_actions, embed_size=embed_size, num_heads=num_he
 
 # Correct instantiation of the models
 dcqn_model = DCQN(n_observation=4, n_actions=10)  # Example values, adjust as needed
-dtqn_model = DTQN(num_actions=10, embed_size=256, num_heads=8, num_layers=4)  # Example values, adjust as needed
+dtqn_model = DTQN(num_actions=10, embed_size=256, num_heads=8, num_layers=2)  # Example values, adjust as needed
 
 # Now pass these instances to check_param_size, not the class names
 dcqn_param_size = check_param_size(dcqn_model)
