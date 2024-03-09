@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 
 class Agent:
     def __init__(self, env_name, policy_model, target_model, lr, gamma, epsilon_start, epsilon_end, n_episodes, memory_size, update_target_every,frame_skip):
-        self.env = gym.make(env_name, render_mode="human",full_action_space=False)
+        self.env = gym.make(env_name, render_mode=None,full_action_space=False)
         env.seed(42)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
@@ -123,6 +123,7 @@ class Agent:
                 for _ in range(self.frame_skip):  # Implement frame skipping
                     next_state, reward, terminated, truncated, info = self.env.step(action)
                     cumulative_reward += reward
+                    
                     frame_count += 1  # Increment frame count
                     if terminated or truncated:
                         break
@@ -159,22 +160,43 @@ class Agent:
 
 def plot_metrics(metrics):
     plt.figure(figsize=(15, 10))
+    colors = ['tab:blue', 'tab:orange', 'tab:green', 'tab:red']  # Define a color scheme
 
+    # Rewards per Episode
     plt.subplot(2, 2, 1)
-    plt.plot(metrics["rewards"])
+    plt.plot(metrics["rewards"], color=colors[0], label='Rewards')
     plt.title("Rewards per Episode")
+    plt.xlabel('Episode')
+    plt.ylabel('Total Reward')
+    plt.grid(True, which='both', linestyle='--', linewidth=0.5)
+    plt.legend()
 
+    # Epsilon Decay
     plt.subplot(2, 2, 2)
-    plt.plot(metrics["epsilon_values"])
+    plt.plot(metrics["epsilon_values"], color=colors[1], label='Epsilon')
     plt.title("Epsilon Decay")
+    plt.xlabel('Episode')
+    plt.ylabel('Epsilon Value')
+    plt.grid(True, which='both', linestyle='--', linewidth=0.5)
+    plt.legend()
 
+    # Loss per Episode
     plt.subplot(2, 2, 3)
-    plt.plot(metrics["losses"])
-    plt.title("Loss per Episode")
+    plt.plot(metrics["losses"], color=colors[2], label='Loss')
+    plt.title("Loss per Frame")
+    plt.xlabel('Frames')
+    plt.ylabel('Loss')
+    plt.grid(True, which='both', linestyle='--', linewidth=0.5)
+    plt.legend()
 
+    # Environment Time per Episode
     plt.subplot(2, 2, 4)
-    plt.plot(metrics["env_times"])
+    plt.plot(metrics["env_times"], color=colors[3], label='Env Time')
     plt.title("Environment Time per Episode")
+    plt.xlabel('Episode')
+    plt.ylabel('Time (s)')
+    plt.grid(True, which='both', linestyle='--', linewidth=0.5)
+    plt.legend()
 
     plt.tight_layout()
     plt.show()
@@ -183,7 +205,8 @@ def plot_metrics(metrics):
 
 
 # Initialize environment and model
-env = gym.make('ALE/Asteroids-v5')
+env_name = "ALE/SpaceInvaders-v5"
+env = gym.make(env_name)
 n_actions = env.action_space.n
 n_observation = 1  # Assuming a stack of 3 frames if not using frame stacking, adjust accordingly
 
@@ -192,13 +215,13 @@ policy_model = DCQN(n_observation=n_observation, n_actions=n_actions)
 target_model = DCQN(n_observation=n_observation, n_actions=n_actions)  # Clone of policy model
 
 # Instantiate the agent
-n_episodes = 1000
-memory_size = 10000
-agent = Agent(env_name='ALE/Asteroids-v5', policy_model=policy_model, target_model=target_model, lr=1e-2, gamma=0.99, epsilon_start=1, epsilon_end=0.01, n_episodes=n_episodes, memory_size=memory_size,update_target_every=5,frame_skip=8)
+n_episodes = 10000
+memory_size = 100000
+agent = Agent(env_name=env_name, policy_model=policy_model, target_model=target_model, lr=1e-1, gamma=0.99, epsilon_start=1, epsilon_end=0.01, n_episodes=n_episodes, memory_size=memory_size,update_target_every=10,frame_skip=2)
 
 # Start training
 batch_size = 32
 agent.train(n_episodes=n_episodes, batch_size=batch_size)
 plot_metrics(agent.metrics)
-
+print(agent.metrics)
 

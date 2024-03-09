@@ -2,35 +2,36 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
 class DCQN(nn.Module):
     def __init__(self, n_observation, n_actions):
         super(DCQN, self).__init__()
-        # Increase the number of channels in each layer to double the original capacity
-        self.conv1 = nn.Conv2d(in_channels=n_observation, out_channels=32*2, kernel_size=8, stride=4)  # 64 channels
-        self.conv2 = nn.Conv2d(32*2, 64*2, kernel_size=4, stride=2)  # 128 channels
-        self.conv3 = nn.Conv2d(64*2, 64*2, kernel_size=3, stride=1)  # 128 channels
+        # Adjusting the convolutional layers for more effective feature extraction
+        self.conv1 = nn.Conv2d(in_channels=n_observation, out_channels=32*4, kernel_size=8, stride=4)
+        self.bn1 = nn.BatchNorm2d(32*4)  # Batch Normalization
+        self.conv2 = nn.Conv2d(32*4, 64*4, kernel_size=4, stride=2)
+        self.bn2 = nn.BatchNorm2d(64*4)  # Batch Normalization
+        self.conv3 = nn.Conv2d(64*4, 64*5, kernel_size=3, stride=1)  # Slightly wider last conv layer
+        self.bn3 = nn.BatchNorm2d(64*5)  # Batch Normalization
 
-        # Use a dummy input to pass through the conv layers to calculate the output size
         dummy_input = torch.zeros(1, n_observation, 84, 84)
         output_size = self._get_conv_output(dummy_input)
 
-        # Increase the size of the fully connected layers accordingly
-        self.fc = nn.Linear(output_size, 512*2)  # Increased the number of neurons in the fc layer to 1024
-        self.fc2 = nn.Linear(512*2,512)
-        self.fc3 = nn.Linear(512,256)
+        # Increasing the size of the fully connected layers for a wider network
+        self.fc = nn.Linear(output_size, 512*5)  # Slightly wider to match the conv output
+        self.fc2 = nn.Linear(512*5, 256*5)
+        self.fc3 = nn.Linear(256*5, 256)
         self.out = nn.Linear(256, n_actions)
 
     def _get_conv_output(self, shape):
         with torch.no_grad():
-            # Pass the dummy input through the conv layers
             output = self._forward_features(shape)
-            # Flatten the output and get the total number of features
             return int(torch.numel(output) / output.size(0))
 
     def _forward_features(self, x):
-        x = F.relu(self.conv1(x))
-        x = F.relu(self.conv2(x))
-        x = F.relu(self.conv3(x))
+        x = F.relu(self.bn1(self.conv1(x)))
+        x = F.relu(self.bn2(self.conv2(x)))
+        x = F.relu(self.bn3(self.conv3(x)))
         return x
 
     def forward(self, x):
@@ -42,6 +43,7 @@ class DCQN(nn.Module):
         
         x = self.out(x)
         return x
+
 
 
 
@@ -107,6 +109,7 @@ dtqn_param_size = check_param_size(dtqn_model)
 
 print("DCQN Param Size:", dcqn_param_size)
 print("DTQN Param Size:", dtqn_param_size)
+
 
 
 
