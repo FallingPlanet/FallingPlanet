@@ -7,13 +7,56 @@ import numpy as np
 from FallingPlanet.orbit.models.QNetworks import DCQN, DTQN
 from torchvision import transforms
 import time
+import torch
+import torchrl
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
+from gym.wrappers import FrameStack
+import PIL.Image as Image
+from torchrl.data.replay_buffers import TensorDictReplayBuffer, ReplayBuffer
+from torchrl.data import LazyMemmapStorage
+from torchrl.data import SliceSampler
+from tensordict import TensorDict
+
+class EfficientReplayBuffer:
+    def __init__(self, capacity, state_shape, action_shape, reward_shape=(1,), done_shape=(1,), device="cuda"):
+        self.device = device
+        storage = LazyMemmapStorage(max_size=capacity)
+        self.replay_buffer = TensorDictReplayBuffer(
+            storage=storage,
+            sampler=SliceSampler(num_slices=4),
+            batch_size=32,  # Adjust based on your needs
+        )
+        # Initialize storage keys
+        self.replay_buffer.extend({
+            "states": torch.zeros((capacity, *state_shape), dtype=torch.float32, device=device),
+            "actions": torch.zeros((capacity, *action_shape), dtype=torch.float32, device=device),
+            "rewards": torch.zeros((capacity, *reward_shape), dtype=torch.float32, device=device),
+            "next_states": torch.zeros((capacity, *state_shape), dtype=torch.float32, device=device),
+            "dones": torch.zeros((capacity, *done_shape), dtype=torch.bool, device=device)
+        })
+
+    def add(self, state, action, reward, next_state, done):
+        # Add experience to the replay buffer
+        idx = self.replay_buffer.storage.size  # Get the next index to store data
+        self.replay_buffer.storage.set(idx, {
+            "states": state.to(self.device),
+            "actions": action.to(self.device),
+            "rewards": reward.to(self.device),
+            "next_states": next_state.to(self.device),
+            "dones": done.to(self.device)
+        })
+
+    def sample(self):
+        # Sample a batch of experiences
+        return self.replay_buffer.sample()
 
 class Agent:
     def __init__(self, env_name, policy_model, target_model, lr, gamma, epsilon_start, epsilon_end, n_episodes, memory_size, update_target_every,frame_skip):
         self.env = gym.make(env_name, render_mode=None,full_action_space=False)
-        env.seed(42)
+        self.env = FrameStack(self.env,4)
+        self.env.seed(42)
+        
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
         # Models
@@ -35,7 +78,8 @@ class Agent:
         self.memory = deque(maxlen=memory_size)
         self.n_actions = self.env.action_space.n
         self.n_episodes = n_episodes
-
+        self.storage = LazyMemmapStorage(max_size=memory_size)
+        self.replay_buffer = TensorDictReplayBuffer(storage=self.storage, batch_size=64)
         # Metric Tracking
         self.metrics = {
             "rewards": [],
@@ -47,7 +91,6 @@ class Agent:
 
         # Define preprocessing pipeline
         self.transform = transforms.Compose([
-            transforms.ToPILImage(),
             transforms.Grayscale(num_output_channels=1),
             transforms.Resize((110, 84)),
             transforms.CenterCrop(84),
@@ -62,18 +105,61 @@ class Agent:
         self.epsilon = max(self.epsilon_end, self.epsilon_decay * self.epsilon)
 
     def preprocess_state(self, state):
-        if not isinstance(state, np.ndarray) and (not isinstance(state, tuple) or not isinstance(state[0], np.ndarray)):
-            raise TypeError("State must be a numpy array or a tuple containing a numpy array.")
-        frame_data = state[0] if isinstance(state, tuple) else state
-        if not (isinstance(frame_data, np.ndarray) and len(frame_data.shape) == 3 and frame_data.shape[2] == 3):
-            raise TypeError("Frame data must be a numpy array with shape [Height, Width, Channels=3].")
-        frame_data = np.mean(frame_data, axis=-1).astype(np.uint8)
-        state_tensor = self.transform(frame_data)
-        state_tensor = state_tensor.unsqueeze(0).to(self.device)
-        return state_tensor
+        processed_frames = []
+        
+        # Check if state is a LazyFrames object
+        if isinstance(state, gym.wrappers.frame_stack.LazyFrames):
+            frames = state
+        elif isinstance(state, tuple):
+            # Assuming the first element of the tuple is what you need
+            frames = state[0]
+        else:
+            raise ValueError("Unsupported state type received for preprocessing")
+        
+        # Now, 'frames' should be iterable and contain the stacked frames
+        for frame in frames:
+            frame_processed = self.process_single_frame(frame)
+            processed_frames.append(frame_processed)
+        
+        # Stack processed frames along a new dimension and add a batch dimension
+        stacked_frames = torch.stack(processed_frames, dim=0).unsqueeze(0)  # Shape: (1, 4, H, W)
+        
+        return stacked_frames.to(self.device)
+
+    def process_single_frame(self, frame):
+        """Process a single frame."""
+        frame = np.array(frame).astype(np.uint8)  # Convert frame to uint8 numpy array if it's not already
+        frame = np.mean(frame, axis=-1)  # Convert to grayscale
+        pil_image = Image.fromarray(frame).convert("L")  # Convert to PIL Image and ensure grayscale
+        transformed_frame = self.transform(pil_image)  # Apply transformations defined in self.transform
+        
+        return transformed_frame
+
 
     def remember(self, state, action, reward, next_state, done):
-        self.memory.append((state, action, reward, next_state, done))
+        # Preprocess state and next_state to ensure they have the correct shape
+        state = self.preprocess_state(state)
+        next_state = self.preprocess_state(next_state)
+
+        # Explicitly determine the batch size from the state or next_state tensor
+        batch_size = state.shape[0]  # Assuming the first dimension is the batch size
+
+        # Now explicitly provide the batch size when creating the TensorDict
+        experience = TensorDict({
+            'states': state,
+            'actions': torch.tensor([action], dtype=torch.long, device=self.device).unsqueeze(0),
+            'rewards': torch.tensor([reward], dtype=torch.float32, device=self.device).unsqueeze(0),
+            'next_states': next_state,
+            'dones': torch.tensor([done], dtype=torch.bool, device=self.device).unsqueeze(0),
+        }, batch_size=torch.Size([batch_size]))
+
+        # Extend the replay buffer with the TensorDict
+        self.replay_buffer.extend(experience)
+
+
+
+
+
 
     def act(self, state):
         state_tensor = self.preprocess_state(state)
@@ -84,44 +170,82 @@ class Agent:
         else:
             return random.randrange(self.n_actions)
 
-    def replay(self, batch_size):
-        if len(self.memory) < batch_size:
+    def replay(self):
+        # Ensure there are enough samples in the replay buffer for a batch
+        if len(self.replay_buffer._storage) < self.replay_buffer._batch_size:
             return
+        
+        # Sample a batch of experiences
+        sampled_experiences = self.replay_buffer.sample()  # Adjust this line if your method signature requires the batch size
 
-        minibatch = random.sample(self.memory, batch_size)
-        states, actions, rewards, next_states, dones = zip(*minibatch)
-        states_processed = torch.cat([self.preprocess_state(state) for state in states])
-        next_states_processed = torch.cat([self.preprocess_state(next_state) for next_state in next_states])
+        states = sampled_experiences["states"].to(self.device)
+        actions = sampled_experiences["actions"].to(self.device)
+        rewards = sampled_experiences["rewards"].to(self.device)
+        next_states = sampled_experiences["next_states"].to(self.device)
+        dones = sampled_experiences["dones"].to(self.device)
 
-        actions_t = torch.tensor(actions, dtype=torch.long).to(self.device)
-        rewards_t = torch.tensor(rewards, dtype=torch.float32).to(self.device)
-        dones_t = torch.tensor(dones, dtype=torch.bool).to(self.device)
+        # Debugging prints
+        
+        # The gather operation
+        try:
+            current_q_values = self.policy_model(states).gather(1, actions).squeeze(1)
+        except RuntimeError as e:
+            print("Error during .gather() operation:")
+            print(e)
+            # Additional debug prints if needed
+            raise
 
-        current_q_values = self.policy_model(states_processed).gather(1, actions_t.unsqueeze(1)).squeeze(1)
-        next_q_values = self.target_model(next_states_processed).detach().max(1)[0]
-        next_q_values[dones_t] = 0.0
+        # Check actions are within expected range
+        num_actions = self.policy_model(states).shape[1]  # This should correspond to the action space size
+        assert actions.max() < num_actions, "Action index out of bounds"
 
-        target_q_values = rewards_t + self.gamma * next_q_values
-        loss = F.mse_loss(current_q_values, target_q_values)
+        next_q_values = self.target_model(next_states).detach().max(1)[0]
+
+        if dones.dim() > 1:
+            dones = dones.squeeze()  # Or explicitly select the correct dimension if necessary
+
+        # Ensure next_q_values has the same shape as current_q_values
+        if next_q_values.dim() < 2:
+            next_q_values = next_q_values.unsqueeze(1)
+
+        # Adjust next_q_values based on dones
+        next_q_values[dones] = 0.0
+
+       
+
+        target_q_values = rewards + self.gamma * next_q_values
+        target_q_values = target_q_values.squeeze(-1)
+        loss = F.huber_loss(current_q_values, target_q_values)
         self.metrics["losses"].append(loss.item())
 
         self.optimizer.zero_grad()
         loss.backward()
+        
+        
         self.optimizer.step()
 
     def train(self, n_episodes, batch_size):
         for episode in range(n_episodes):
             start_time = time.time()
             state = self.env.reset()
+            
+            
+            
+
             total_reward = 0
             terminated = False
             frame_count = 0  # Initialize frame counter for the episode
             
             while not terminated:
                 action = self.act(state)
+                
                 cumulative_reward = 0
-                for _ in range(self.frame_skip):  # Implement frame skipping
+                for _ in range(self.frame_skip):
                     next_state, reward, terminated, truncated, info = self.env.step(action)
+                    
+                    cumulative_reward += reward
+
+                    
                     cumulative_reward += reward
                     
                     frame_count += 1  # Increment frame count
@@ -130,7 +254,7 @@ class Agent:
                 self.remember(state, action, cumulative_reward, next_state, terminated or truncated)
                 state = next_state
                 total_reward += cumulative_reward
-                self.replay(batch_size)
+                self.replay()
 
             self.update_epsilon()
             self.metrics["rewards"].append(total_reward)
@@ -142,12 +266,12 @@ class Agent:
                 self.update_target_network()
 
             if episode % 500 == 0:  # Save the model every 500 episodes
-                self.save_model(f"policy_model_episode_{episode}.pth")
+                self.save_model(f"F:\FP_Agents\SpaceInvaders\dtqn2_policy_model_episode_{episode}.pth")
 
             print(f"Episode: {episode+1}, Total reward: {total_reward}, Epsilon: {self.epsilon}, Frames: {frame_count}, Loss: {self.metrics['losses'][-1] if self.metrics['losses'] else 'N/A'}")
 
             
-    def save_model(self, filename="F:\FP_Agents\Asteroids\policy_model.pth"):
+    def save_model(self, filename="F:\FP_Agents\SpaceInvaders\dtqn2_policy_model.pth"):
         """Save the model's state dict and other relevant parameters."""
         checkpoint = {
             'model_state_dict': self.policy_model.state_dict(),
@@ -204,24 +328,30 @@ def plot_metrics(metrics):
 
 
 
-# Initialize environment and model
-env_name = "ALE/SpaceInvaders-v5"
-env = gym.make(env_name)
-n_actions = env.action_space.n
-n_observation = 1  # Assuming a stack of 3 frames if not using frame stacking, adjust accordingly
 
-# Instantiate policy and target models
-policy_model = DCQN(n_observation=n_observation, n_actions=n_actions)
-target_model = DCQN(n_observation=n_observation, n_actions=n_actions)  # Clone of policy model
+if __name__ == '__main__':
+    # Initialize environment and model
+    env_name = "ALE/SpaceInvaders-v5"
+    env = gym.make(env_name)
+    env = FrameStack(env,4)
+    n_actions = env.action_space.n
+    
+    n_observation = 6  # Assuming a stack of 3 frames if not using frame stacking, adjust accordingly
 
-# Instantiate the agent
-n_episodes = 10000
-memory_size = 100000
-agent = Agent(env_name=env_name, policy_model=policy_model, target_model=target_model, lr=1e-1, gamma=0.99, epsilon_start=1, epsilon_end=0.01, n_episodes=n_episodes, memory_size=memory_size,update_target_every=10,frame_skip=2)
+    # Instantiate policy and target models
+    #policy_model = DCQN(n_observation=n_observation, n_actions=n_actions)
+    #target_model = DCQN(n_observation=n_observation, n_actions=n_actions)  # Clone of policy model
+    policy_model = DTQN(num_actions=n_observation, embed_size=256, num_heads=8, num_layers=4)  # Example values, adjust as needed
+    target_model = DTQN(num_actions=n_observation, embed_size=256, num_heads=8, num_layers=4)
+    # Instantiate the agent
+    n_episodes = 10000
+    memory_size = 100000
+    agent = Agent(env_name=env_name, policy_model=policy_model, target_model=target_model, lr=1e-4, gamma=0.99, epsilon_start=1, epsilon_end=0.1, n_episodes=n_episodes, memory_size=memory_size, update_target_every=10, frame_skip=8)
 
-# Start training
-batch_size = 32
-agent.train(n_episodes=n_episodes, batch_size=batch_size)
-plot_metrics(agent.metrics)
-print(agent.metrics)
+    # Start training
+    batch_size = 32
+    agent.train(n_episodes=n_episodes, batch_size=batch_size)
+    plot_metrics(agent.metrics)
+    print(agent.metrics)
+
 
