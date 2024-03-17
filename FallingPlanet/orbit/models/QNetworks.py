@@ -5,22 +5,24 @@ import torch.nn.functional as F
 class DCQN(nn.Module):
     def __init__(self, n_actions):
         super(DCQN, self).__init__()
-        # Here, in_channels is set to 4 explicitly to handle 4 stacked frames
-        self.conv1 = nn.Conv2d(in_channels=4, out_channels=32, kernel_size=8, stride=4)
-        self.bn1 = nn.BatchNorm2d(32)
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=4, stride=2)
-        self.bn2 = nn.BatchNorm2d(64)
-        self.conv3 = nn.Conv2d(64, 64, kernel_size=3, stride=1)
-        self.bn3 = nn.BatchNorm2d(64)
+        
+        # Adjust the number of channels in convolutional layers
+        self.conv1 = nn.Conv2d(in_channels=4, out_channels=64, kernel_size=8, stride=4)  # Reduced from 128 to 64
+        self.bn1 = nn.BatchNorm2d(64)
+        self.conv2 = nn.Conv2d(64, 128, kernel_size=4, stride=2)  # Reduced from 256 to 128
+        self.bn2 = nn.BatchNorm2d(128)
+        self.conv3 = nn.Conv2d(128, 256, kernel_size=2, stride=1)  # Reduced from 512 to 256
+        self.bn3 = nn.BatchNorm2d(256)
 
-        # Using a dummy input to determine the size of the fully connected layer
+        # Dummy input to determine fully connected layer size
         dummy_input = torch.zeros(1, 4, 84, 84)
         output_size = self._get_conv_output(dummy_input)
 
-        self.fc = nn.Linear(output_size, 512)
-        self.fc2 = nn.Linear(512, 128)
-        self.fc3 = nn.Linear(128, 256)
-        self.out = nn.Linear(256, n_actions)
+        # Adjust the number of neurons in fully connected layers
+        self.fc = nn.Linear(output_size, 2048)  # Significantly reduced to manage parameter count
+        self.fc2 = nn.Linear(2048, 1024)  # Adjusted accordingly
+        self.fc3 = nn.Linear(1024, 512)  # Further adjustment
+        self.out = nn.Linear(512, n_actions)  # Final output layer
 
     def _get_conv_output(self, shape):
         with torch.no_grad():
@@ -34,6 +36,8 @@ class DCQN(nn.Module):
         return x
 
     def forward(self, x):
+        if x.dim() == 5:
+            x = x.squeeze(2)
         x = self._forward_features(x)
         x = x.view(x.size(0), -1)
         x = F.relu(self.fc(x))
@@ -48,67 +52,98 @@ class DCQN(nn.Module):
 
 
 
+
         
 
 
 
 
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.nn import TransformerEncoder, TransformerEncoderLayer
+
+class PatchEmbedding(nn.Module):
+    def __init__(self, patch_size, embed_size, num_patches):
+        super(PatchEmbedding, self).__init__()
+        self.patch_size = patch_size
+        self.embed_size = embed_size
+        self.num_patches = num_patches
+        # Since channel is always 1, we remove it from the calculation
+        self.projection = nn.Linear(patch_size * patch_size, embed_size)
+
+    def forward(self, x):
+        # Assuming x: [batch_size, num_stacked_frames, height, width], removing channels
+        batch_size, nf, h, w = x.size()
+        # Create patches
+        x = x.unfold(2, self.patch_size, self.patch_size).unfold(3, self.patch_size, self.patch_size)
+        x = x.contiguous().view(batch_size, nf, self.num_patches, -1)  # Flatten patches
+        x = x.permute(0, 2, 1, 3).contiguous().view(batch_size * self.num_patches * nf, -1)
+        # Project patches to embeddings
+        x = self.projection(x)
+        x = x.view(batch_size, self.num_patches, nf, self.embed_size).permute(0, 2, 1, 3)
+        return x
 
 
 class DTQN(nn.Module):
-    def __init__(self, num_actions, embed_size=528, num_heads=8, num_layers=1, fc1_out=512, fc2_out=128, fc_intermediate=256, num_stacked_frames=4):
+    def __init__(self, num_actions, embed_size=528, num_heads=8, num_layers=1, fc1_out=512, fc2_out=128, fc_intermediate=256, num_stacked_frames=4, patch_size=6):
         super(DTQN, self).__init__()
         self.embed_size = embed_size
         self.num_stacked_frames = num_stacked_frames
-        # Assume each frame is flattened to a 84x84 grayscale image for simplicity in calculation
-        self.frame_input_dim = 84 * 84  # This is for one frame
-        self.total_input_dim = self.frame_input_dim * num_stacked_frames  # Total input dimension for stacked frames
+        self.patch_size = patch_size
+        self.frame_input_dim = 84 * 84  # For one frame
+        self.total_input_dim = self.frame_input_dim * num_stacked_frames  # For all stacked frames
+        self.num_patches = (84 // patch_size) ** 2
 
-        # Dimensionality reduction layer to match the embed_size
-        self.dim_reduction = nn.Linear(self.total_input_dim, embed_size * num_stacked_frames)
-        
-        # Positional Embeddings added after dimensionality reduction
-        self.positional_embeddings = nn.Parameter(torch.zeros(1, num_stacked_frames, embed_size))
-        
+        # Patch embedding
+        self.patch_embedding = PatchEmbedding(patch_size, embed_size, self.num_patches)
+
+        # Positional Embeddings
+        self.positional_embeddings = nn.Parameter(torch.randn(1, num_stacked_frames*self.num_patches, embed_size))
+
         # Transformer Encoder Layer
-        self.transformer_encoder = nn.TransformerEncoder(
-            nn.TransformerEncoderLayer(d_model=embed_size, nhead=num_heads, batch_first=True),
+        self.transformer_encoder = TransformerEncoder(
+            TransformerEncoderLayer(d_model=embed_size, nhead=num_heads, batch_first=True),
             num_layers=num_layers
         )
 
-        # Assuming the transformer output is flattened before passing to the fully connected layers
-        self.fc1 = nn.Linear(embed_size * num_stacked_frames, fc1_out)
+        # Fully connected layers
+        self.fc1 = nn.Linear(embed_size * num_stacked_frames * self.num_patches, fc1_out)
         self.fc2 = nn.Linear(fc1_out, fc2_out)
         self.fc3 = nn.Linear(fc2_out, fc_intermediate)
         self.fc_out = nn.Linear(fc_intermediate, num_actions)
 
     def forward(self, x):
+        # Check and adjust for input dimensions
+        if x.dim() == 5:
+            x = x.squeeze(2)
+
+        # x: [batch_size, num_stacked_frames, channels, height, width]
         
-        x = x.view(x.size(0), -1)  # Flatten input
+        # Embed patches
+        x = self.patch_embedding(x)
         
-        
-        x = self.dim_reduction(x)
-       
-        
-        x = x.view(-1, self.num_stacked_frames, self.embed_size)
-        
-        
-        x += self.positional_embeddings
-        
-        
+        x = x.reshape(x.size(0), -1, self.embed_size)
+        # Add positional embeddings
+        x = x + self.positional_embeddings
+
+        # Transformer encoder
         x = self.transformer_encoder(x)
-        
-        
+
+        # Flatten the output for the fully connected layer
         x = x.view(x.size(0), -1)
-        
-        
+
+        # Fully connected layers
         x = F.relu(self.fc1(x))
-        
         x = F.relu(self.fc2(x))
         x = F.relu(self.fc3(x))
         output = self.fc_out(x)
-        
+
         return output
+
+
+
 
 
 
@@ -124,7 +159,7 @@ def check_param_size(model):
 # Assuming 'n_observation' is the number of channels in the input image (e.g., 4 for stacked frames) 
 # and 'n_actions' is the number of possible actions in your environment
 n_observation = 4
-n_actions = 10  # Example value, replace with the actual number of actions for your specific environment
+n_actions = 6  # Example value, replace with the actual number of actions for your specific environment
 
 dcqn_model = DCQN(n_actions=n_actions)
 
@@ -136,7 +171,7 @@ dcqn_model = DCQN(n_actions=n_actions)
 
 # Correct instantiation of the models
 dcqn_model = DCQN( n_actions=10)  # Example values, adjust as needed
-dtqn_model = DTQN(num_actions=1, embed_size=256, num_heads=8, num_layers=4)  # Example values, adjust as needed
+dtqn_model = DTQN(num_actions=6, embed_size=512, num_heads=16, num_layers=3,patch_size=16)  # Example values, adjust as needed
 
 # Now pass these instances to check_param_size, not the class names
 dcqn_param_size = check_param_size(dcqn_model)

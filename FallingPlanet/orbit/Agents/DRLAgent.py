@@ -17,6 +17,9 @@ from torchrl.data.replay_buffers import TensorDictReplayBuffer, ReplayBuffer
 from torchrl.data import LazyMemmapStorage
 from torchrl.data import SliceSampler
 from tensordict import TensorDict
+import sys
+import os
+from torch.utils.tensorboard import SummaryWriter
 
 class EfficientReplayBuffer:
     def __init__(self, capacity, state_shape, action_shape, reward_shape=(1,), done_shape=(1,), device="cuda"):
@@ -225,6 +228,8 @@ class Agent:
         self.optimizer.step()
 
     def train(self, n_episodes, batch_size):
+        writer = SummaryWriter('runs/DCQN_10k_Breakout')
+
         for episode in range(n_episodes):
             start_time = time.time()
             state = self.env.reset()
@@ -261,17 +266,27 @@ class Agent:
             self.metrics["epsilon_values"].append(self.epsilon)
             self.metrics["env_times"].append(time.time() - start_time)
             self.metrics["frame_counts"].append(frame_count)  # Track frame count per episode
-
+            # Log metrics to TensorBoard
+            writer.add_scalar('Reward', total_reward, episode)
+            writer.add_scalar('Epsilon', self.epsilon, episode)
+            writer.add_scalar('Loss', self.metrics['losses'][-1] if self.metrics['losses'] else 0, episode)
+            writer.add_scalar('Env Time', time.time() - start_time, episode)
+            
             if episode % self.UPDATE_TARGET_EVERY == 0:
                 self.update_target_network()
 
             if episode % 500 == 0:  # Save the model every 500 episodes
-                self.save_model(f"F:\FP_Agents\SpaceInvaders\dtqn2_policy_model_episode_{episode}.pth")
-
+                self.save_model(f"F:\FP_Agents\Breakout\dcqn\_policy_model_episode_{episode}.pth")
+            # Periodic evaluation
+            if episode % 100 == 0 and episode > 0:  # Avoid evaluation at the very start
+                avg_reward = self.evaluate(n_eval_episodes=1)  # Adjust n_eval_episodes as needed
+                writer.add_scalar('Evaluation/Average Reward', avg_reward, episode)
+                print(f"Evaluation after episode {episode}: Average Reward = {avg_reward}")
+                
             print(f"Episode: {episode+1}, Total reward: {total_reward}, Epsilon: {self.epsilon}, Frames: {frame_count}, Loss: {self.metrics['losses'][-1] if self.metrics['losses'] else 'N/A'}")
 
             
-    def save_model(self, filename="F:\FP_Agents\SpaceInvaders\dtqn2_policy_model.pth"):
+    def save_model(self, filename="F:\FP_Agents\Breakout\dcqn\_policy_model.pth"):
         """Save the model's state dict and other relevant parameters."""
         checkpoint = {
             'model_state_dict': self.policy_model.state_dict(),
@@ -281,7 +296,36 @@ class Agent:
         }
         torch.save(checkpoint, filename)
         print(f"Model saved to {filename}")
+    def evaluate(self, n_eval_episodes=25):
+            total_rewards = []
+            for episode in range(n_eval_episodes):
+                state = self.env.reset()
+                total_reward = 0
+                done = False
+                while not done:
+                    state_tensor = self.preprocess_state(state)  # Ensure state is preprocessed
+                    with torch.no_grad():
+                        action_values = self.policy_model(state_tensor)
+                        action = action_values.max(1)[1].item()  # Choose the best action
+                    state, reward, terminated,truncated, _ = self.env.step(action)
+                    done = terminated or truncated
+                    total_reward += reward
+                total_rewards.append(total_reward)
+                print(f"Eval Episode {episode+1}/{n_eval_episodes}: Total Reward = {total_reward}")
+            avg_reward = sum(total_rewards) / len(total_rewards)
+            print(f"Average Reward over {n_eval_episodes} episodes: {avg_reward}")
+            return avg_reward
+        
+    def evaluate_with_checkpoint(self, checkpoint_path):
+        # Load the checkpoint into the model
+        checkpoint = torch.load(checkpoint_path)
+        self.policy_model.load_state_dict(checkpoint['model_state_dict'])
+        self.policy_model.eval()  # Ensure the model is in evaluation mode
 
+        # Evaluate the model
+        avg_reward = self.evaluate(n_eval_episodes=1)
+        print(f"Evaluated {checkpoint_path}: Average Reward = {avg_reward}")
+        
 def plot_metrics(metrics):
     plt.figure(figsize=(15, 10))
     colors = ['tab:blue', 'tab:orange', 'tab:green', 'tab:red']  # Define a color scheme
@@ -330,8 +374,11 @@ def plot_metrics(metrics):
 
 
 if __name__ == '__main__':
+    mode = "train"  # Default mode
+    if len(sys.argv) > 1:
+        mode = sys.argv[1]  # Assume the second argument specifies mode
     # Initialize environment and model
-    env_name = "ALE/SpaceInvaders-v5"
+    env_name = "ALE/Breakout-v5"
     env = gym.make(env_name)
     env = FrameStack(env,4)
     n_actions = env.action_space.n
@@ -339,19 +386,30 @@ if __name__ == '__main__':
     n_observation = 6  # Assuming a stack of 3 frames if not using frame stacking, adjust accordingly
 
     # Instantiate policy and target models
-    #policy_model = DCQN(n_observation=n_observation, n_actions=n_actions)
-    #target_model = DCQN(n_observation=n_observation, n_actions=n_actions)  # Clone of policy model
-    policy_model = DTQN(num_actions=n_observation, embed_size=256, num_heads=8, num_layers=4)  # Example values, adjust as needed
-    target_model = DTQN(num_actions=n_observation, embed_size=256, num_heads=8, num_layers=4)
+    policy_model = DCQN(n_actions=n_actions)
+    target_model = DCQN(n_actions=n_actions)  # Clone of policy model
+    #policy_model = DTQN(num_actions=n_observation, embed_size=512, num_heads=16, num_layers=3,patch_size=16)  # Example values, adjust as needed
+    #target_model = DTQN(num_actions=n_observation, embed_size=512, num_heads=16, num_layers=3,patch_size=16)
     # Instantiate the agent
-    n_episodes = 10000
+    n_episodes = 10002
     memory_size = 100000
-    agent = Agent(env_name=env_name, policy_model=policy_model, target_model=target_model, lr=1e-4, gamma=0.99, epsilon_start=1, epsilon_end=0.1, n_episodes=n_episodes, memory_size=memory_size, update_target_every=10, frame_skip=8)
+    agent = Agent(env_name=env_name, policy_model=policy_model, target_model=target_model, lr=2e-4, gamma=0.99, epsilon_start=1, epsilon_end=0.1, n_episodes=n_episodes, memory_size=memory_size, update_target_every=50, frame_skip=4)
 
     # Start training
     batch_size = 32
-    agent.train(n_episodes=n_episodes, batch_size=batch_size)
-    plot_metrics(agent.metrics)
-    print(agent.metrics)
-
+   
+    checkpoint_dir = "F:\FP_Agents\Breakout\dcqn"
+    if mode == "train":
+        print("Starting Training...")
+        agent.train(n_episodes=10000, batch_size=32)
+        plot_metrics(agent.metrics)
+    elif mode == "eval":
+        print("Starting Evaluation...")
+        # Iterate through each checkpoint in the directory and evaluate it
+        for checkpoint_filename in sorted(os.listdir(checkpoint_dir)):
+            if checkpoint_filename.endswith('.pth'):
+                checkpoint_path = os.path.join(checkpoint_dir, checkpoint_filename)
+                agent.evaluate_with_checkpoint(checkpoint_path)
+    else:
+        print(f"Unknown mode: {mode}. Please use 'train' or 'eval'.")
 

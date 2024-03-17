@@ -16,12 +16,15 @@ import PIL.Image as Image
 from torchrl.data.replay_buffers import TensorDictReplayBuffer, ReplayBuffer
 from torchrl.data import LazyMemmapStorage
 from torchrl.data import SliceSampler
-
+from tensordict import TensorDict
+import sys
+import os
+from torch.utils.tensorboard import SummaryWriter
 
 class EfficientReplayBuffer:
     def __init__(self, capacity, state_shape, action_shape, reward_shape=(1,), done_shape=(1,), device="cuda"):
         self.device = device
-        storage = LazyMemmapStorage(capacity=capacity)
+        storage = LazyMemmapStorage(max_size=capacity)
         self.replay_buffer = TensorDictReplayBuffer(
             storage=storage,
             sampler=SliceSampler(num_slices=4),
@@ -78,7 +81,7 @@ class Agent:
         self.memory = deque(maxlen=memory_size)
         self.n_actions = self.env.action_space.n
         self.n_episodes = n_episodes
-        self.storage = LazyMemmapStorage(capacity=memory_size)
+        self.storage = LazyMemmapStorage(max_size=memory_size)
         self.replay_buffer = TensorDictReplayBuffer(storage=self.storage, batch_size=64)
         # Metric Tracking
         self.metrics = {
@@ -137,14 +140,28 @@ class Agent:
 
 
     def remember(self, state, action, reward, next_state, done):
-        # Ensure all components are tensors and on the correct device
-        state, action, reward, next_state, done = map(
-            lambda x: torch.tensor(x).to(self.device, non_blocking=True),
-            (state, action, reward, next_state, done)
-        )
-        # Add a batch dimension to each tensor, as TensorDict expects batched input
-        experience = torch.tensor([(state, action, reward, next_state, done)], dtype=torch.float32).to(self.device)
+        # Preprocess state and next_state to ensure they have the correct shape
+        state = self.preprocess_state(state)
+        next_state = self.preprocess_state(next_state)
+
+        # Explicitly determine the batch size from the state or next_state tensor
+        batch_size = state.shape[0]  # Assuming the first dimension is the batch size
+
+        # Now explicitly provide the batch size when creating the TensorDict
+        experience = TensorDict({
+            'states': state,
+            'actions': torch.tensor([action], dtype=torch.long, device=self.device).unsqueeze(0),
+            'rewards': torch.tensor([reward], dtype=torch.float32, device=self.device).unsqueeze(0),
+            'next_states': next_state,
+            'dones': torch.tensor([done], dtype=torch.bool, device=self.device).unsqueeze(0),
+        }, batch_size=torch.Size([batch_size]))
+
+        # Extend the replay buffer with the TensorDict
         self.replay_buffer.extend(experience)
+
+
+
+
 
 
     def act(self, state):
@@ -157,30 +174,50 @@ class Agent:
             return random.randrange(self.n_actions)
 
     def replay(self):
-        if len(self.replay_buffer) < self.replay_buffer.batch_size:
+        # Ensure there are enough samples in the replay buffer for a batch
+        if len(self.replay_buffer._storage) < self.replay_buffer._batch_size:
             return
+        
+        # Sample a batch of experiences
+        sampled_experiences = self.replay_buffer.sample()  # Adjust this line if your method signature requires the batch size
 
-        sampled_experiences = self.replay_buffer.sample()  # Returns a TensorDict
         states = sampled_experiences["states"].to(self.device)
         actions = sampled_experiences["actions"].to(self.device)
         rewards = sampled_experiences["rewards"].to(self.device)
         next_states = sampled_experiences["next_states"].to(self.device)
         dones = sampled_experiences["dones"].to(self.device)
 
-        # Now, use states, actions, rewards, next_states, and dones tensors directly in your learning updates
-
-                
+        # Debugging prints
+        
+        # The gather operation
+        try:
+            current_q_values = self.policy_model(states).gather(1, actions).squeeze(1)
+        except RuntimeError as e:
+            print("Error during .gather() operation:")
+            print(e)
+            # Additional debug prints if needed
+            raise
 
         # Check actions are within expected range
         num_actions = self.policy_model(states).shape[1]  # This should correspond to the action space size
         assert actions.max() < num_actions, "Action index out of bounds"
 
-
-        current_q_values = self.policy_model(states).gather(1, actions.unsqueeze(1)).squeeze(1)
         next_q_values = self.target_model(next_states).detach().max(1)[0]
+
+        if dones.dim() > 1:
+            dones = dones.squeeze()  # Or explicitly select the correct dimension if necessary
+
+        # Ensure next_q_values has the same shape as current_q_values
+        if next_q_values.dim() < 2:
+            next_q_values = next_q_values.unsqueeze(1)
+
+        # Adjust next_q_values based on dones
         next_q_values[dones] = 0.0
 
+       
+
         target_q_values = rewards + self.gamma * next_q_values
+        target_q_values = target_q_values.squeeze(-1)
         loss = F.huber_loss(current_q_values, target_q_values)
         self.metrics["losses"].append(loss.item())
 
@@ -191,6 +228,8 @@ class Agent:
         self.optimizer.step()
 
     def train(self, n_episodes, batch_size):
+        writer = SummaryWriter('runs/DTQN_20k')
+
         for episode in range(n_episodes):
             start_time = time.time()
             state = self.env.reset()
@@ -220,24 +259,34 @@ class Agent:
                 self.remember(state, action, cumulative_reward, next_state, terminated or truncated)
                 state = next_state
                 total_reward += cumulative_reward
-                self.replay(batch_size)
+                self.replay()
 
             self.update_epsilon()
             self.metrics["rewards"].append(total_reward)
             self.metrics["epsilon_values"].append(self.epsilon)
             self.metrics["env_times"].append(time.time() - start_time)
             self.metrics["frame_counts"].append(frame_count)  # Track frame count per episode
-
+            # Log metrics to TensorBoard
+            writer.add_scalar('Reward', total_reward, episode)
+            writer.add_scalar('Epsilon', self.epsilon, episode)
+            writer.add_scalar('Loss', self.metrics['losses'][-1] if self.metrics['losses'] else 0, episode)
+            writer.add_scalar('Env Time', time.time() - start_time, episode)
+            
             if episode % self.UPDATE_TARGET_EVERY == 0:
                 self.update_target_network()
 
             if episode % 500 == 0:  # Save the model every 500 episodes
-                self.save_model(f"F:\FP_Agents\SpaceInvaders\dtqn2_policy_model_episode_{episode}.pth")
-
+                self.save_model(f"F:\FP_Agents\SpaceInvaders\dtqn\_policy_model_episode_{episode}.pth")
+            # Periodic evaluation
+            if episode % 100 == 0 and episode > 0:  # Avoid evaluation at the very start
+                avg_reward = self.evaluate(n_eval_episodes=1)  # Adjust n_eval_episodes as needed
+                writer.add_scalar('Evaluation/Average Reward', avg_reward, episode)
+                print(f"Evaluation after episode {episode}: Average Reward = {avg_reward}")
+                
             print(f"Episode: {episode+1}, Total reward: {total_reward}, Epsilon: {self.epsilon}, Frames: {frame_count}, Loss: {self.metrics['losses'][-1] if self.metrics['losses'] else 'N/A'}")
 
             
-    def save_model(self, filename="F:\FP_Agents\SpaceInvaders\dtqn2_policy_model.pth"):
+    def save_model(self, filename="F:\FP_Agents\SpaceInvaders\dtqn\_policy_model.pth"):
         """Save the model's state dict and other relevant parameters."""
         checkpoint = {
             'model_state_dict': self.policy_model.state_dict(),
@@ -247,7 +296,36 @@ class Agent:
         }
         torch.save(checkpoint, filename)
         print(f"Model saved to {filename}")
+    def evaluate(self, n_eval_episodes=25):
+            total_rewards = []
+            for episode in range(n_eval_episodes):
+                state = self.env.reset()
+                total_reward = 0
+                done = False
+                while not done:
+                    state_tensor = self.preprocess_state(state)  # Ensure state is preprocessed
+                    with torch.no_grad():
+                        action_values = self.policy_model(state_tensor)
+                        action = action_values.max(1)[1].item()  # Choose the best action
+                    state, reward, terminated,truncated, _ = self.env.step(action)
+                    done = terminated or truncated
+                    total_reward += reward
+                total_rewards.append(total_reward)
+                print(f"Eval Episode {episode+1}/{n_eval_episodes}: Total Reward = {total_reward}")
+            avg_reward = sum(total_rewards) / len(total_rewards)
+            print(f"Average Reward over {n_eval_episodes} episodes: {avg_reward}")
+            return avg_reward
+        
+    def evaluate_with_checkpoint(self, checkpoint_path):
+        # Load the checkpoint into the model
+        checkpoint = torch.load(checkpoint_path)
+        self.policy_model.load_state_dict(checkpoint['model_state_dict'])
+        self.policy_model.eval()  # Ensure the model is in evaluation mode
 
+        # Evaluate the model
+        avg_reward = self.evaluate(n_eval_episodes=1)
+        print(f"Evaluated {checkpoint_path}: Average Reward = {avg_reward}")
+        
 def plot_metrics(metrics):
     plt.figure(figsize=(15, 10))
     colors = ['tab:blue', 'tab:orange', 'tab:green', 'tab:red']  # Define a color scheme
@@ -296,6 +374,9 @@ def plot_metrics(metrics):
 
 
 if __name__ == '__main__':
+    mode = "train"  # Default mode
+    if len(sys.argv) > 1:
+        mode = sys.argv[1]  # Assume the second argument specifies mode
     # Initialize environment and model
     env_name = "ALE/SpaceInvaders-v5"
     env = gym.make(env_name)
@@ -305,19 +386,30 @@ if __name__ == '__main__':
     n_observation = 6  # Assuming a stack of 3 frames if not using frame stacking, adjust accordingly
 
     # Instantiate policy and target models
-    #policy_model = DCQN(n_observation=n_observation, n_actions=n_actions)
-    #target_model = DCQN(n_observation=n_observation, n_actions=n_actions)  # Clone of policy model
-    policy_model = DTQN(num_actions=n_observation, embed_size=256, num_heads=8, num_layers=4)  # Example values, adjust as needed
-    target_model = DTQN(num_actions=n_observation, embed_size=256, num_heads=8, num_layers=4)
+    #policy_model = DCQN(n_actions=n_actions)
+    #target_model = DCQN(n_actions=n_actions)  # Clone of policy model
+    policy_model = DTQN(num_actions=n_observation, embed_size=512, num_heads=16, num_layers=3,patch_size=16)  # Example values, adjust as needed
+    target_model = DTQN(num_actions=n_observation, embed_size=512, num_heads=16, num_layers=3,patch_size=16)
     # Instantiate the agent
-    n_episodes = 10000
+    n_episodes = 10001
     memory_size = 100000
-    agent = Agent(env_name=env_name, policy_model=policy_model, target_model=target_model, lr=1e-4, gamma=0.99, epsilon_start=1, epsilon_end=0.1, n_episodes=n_episodes, memory_size=memory_size, update_target_every=10, frame_skip=8)
+    agent = Agent(env_name=env_name, policy_model=policy_model, target_model=target_model, lr=2e-3, gamma=0.99, epsilon_start=1, epsilon_end=0.1, n_episodes=n_episodes, memory_size=memory_size, update_target_every=50, frame_skip=4)
 
     # Start training
-    batch_size = 16
-    agent.train(n_episodes=n_episodes, batch_size=batch_size)
-    plot_metrics(agent.metrics)
-    print(agent.metrics)
-
+    batch_size = 32
+   
+    checkpoint_dir = "F:\FP_Agents\SpaceInvaders"
+    if mode == "train":
+        print("Starting Training...")
+        agent.train(n_episodes=10000, batch_size=32)
+        plot_metrics(agent.metrics)
+    elif mode == "eval":
+        print("Starting Evaluation...")
+        # Iterate through each checkpoint in the directory and evaluate it
+        for checkpoint_filename in sorted(os.listdir(checkpoint_dir)):
+            if checkpoint_filename.endswith('.pth'):
+                checkpoint_path = os.path.join(checkpoint_dir, checkpoint_filename)
+                agent.evaluate_with_checkpoint(checkpoint_path)
+    else:
+        print(f"Unknown mode: {mode}. Please use 'train' or 'eval'.")
 
