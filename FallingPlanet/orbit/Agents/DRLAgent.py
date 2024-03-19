@@ -56,7 +56,7 @@ class EfficientReplayBuffer:
 
 class Agent:
     def __init__(self, env_name, policy_model, target_model, lr, gamma, epsilon_start, epsilon_end, n_episodes, memory_size, update_target_every,frame_skip):
-        self.env = gym.make(env_name, render_mode=None,full_action_space=False)
+        self.env = gym.make(env_name, render_mode="human",full_action_space=False)
         self.env = FrameStack(self.env,4)
         self.env.seed(42)
         
@@ -228,7 +228,7 @@ class Agent:
         self.optimizer.step()
 
     def train(self, n_episodes, batch_size):
-        writer = SummaryWriter('runs/DCQN_10k_Breakout')
+        writer = SummaryWriter('runs/DTQN_10k_Centipede')
 
         for episode in range(n_episodes):
             start_time = time.time()
@@ -276,17 +276,19 @@ class Agent:
                 self.update_target_network()
 
             if episode % 500 == 0:  # Save the model every 500 episodes
-                self.save_model(f"F:\FP_Agents\Breakout\dcqn\_policy_model_episode_{episode}.pth")
+                self.save_model(f"F:\FP_Agents\Centipede\dtqn\_policy_model_episode_{episode}.pth")
+            if episode == 100000:
+                self.save_model(f"F:\FP_Agents\Centipede\dtqn\_policy_model_episode_{episode}.pth")
             # Periodic evaluation
             if episode % 100 == 0 and episode > 0:  # Avoid evaluation at the very start
-                avg_reward = self.evaluate(n_eval_episodes=1)  # Adjust n_eval_episodes as needed
+                avg_reward = self.evaluate(n_eval_episodes=5)  # Adjust n_eval_episodes as needed
                 writer.add_scalar('Evaluation/Average Reward', avg_reward, episode)
                 print(f"Evaluation after episode {episode}: Average Reward = {avg_reward}")
                 
             print(f"Episode: {episode+1}, Total reward: {total_reward}, Epsilon: {self.epsilon}, Frames: {frame_count}, Loss: {self.metrics['losses'][-1] if self.metrics['losses'] else 'N/A'}")
 
             
-    def save_model(self, filename="F:\FP_Agents\Breakout\dcqn\_policy_model.pth"):
+    def save_model(self, filename="F:\FP_Agents\Centipede\dtqn\_policy_model.pth"):
         """Save the model's state dict and other relevant parameters."""
         checkpoint = {
             'model_state_dict': self.policy_model.state_dict(),
@@ -378,7 +380,7 @@ if __name__ == '__main__':
     if len(sys.argv) > 1:
         mode = sys.argv[1]  # Assume the second argument specifies mode
     # Initialize environment and model
-    env_name = "ALE/Breakout-v5"
+    env_name = "ALE/Centipede-v5"
     env = gym.make(env_name)
     env = FrameStack(env,4)
     n_actions = env.action_space.n
@@ -386,22 +388,22 @@ if __name__ == '__main__':
     n_observation = 6  # Assuming a stack of 3 frames if not using frame stacking, adjust accordingly
 
     # Instantiate policy and target models
-    policy_model = DCQN(n_actions=n_actions)
-    target_model = DCQN(n_actions=n_actions)  # Clone of policy model
-    #policy_model = DTQN(num_actions=n_observation, embed_size=512, num_heads=16, num_layers=3,patch_size=16)  # Example values, adjust as needed
-    #target_model = DTQN(num_actions=n_observation, embed_size=512, num_heads=16, num_layers=3,patch_size=16)
+    #policy_model = DCQN(n_actions=n_actions)
+    #target_model = DCQN(n_actions=n_actions)  # Clone of policy model
+    policy_model = DTQN(num_actions=n_observation, embed_size=512, num_heads=16, num_layers=3,patch_size=16)  # Example values, adjust as needed
+    target_model = DTQN(num_actions=n_observation, embed_size=512, num_heads=16, num_layers=3,patch_size=16)
     # Instantiate the agent
-    n_episodes = 10002
+    n_episodes = 10001
     memory_size = 100000
-    agent = Agent(env_name=env_name, policy_model=policy_model, target_model=target_model, lr=2e-4, gamma=0.99, epsilon_start=1, epsilon_end=0.1, n_episodes=n_episodes, memory_size=memory_size, update_target_every=50, frame_skip=4)
+    agent = Agent(env_name=env_name, policy_model=policy_model, target_model=target_model, lr=1e-3, gamma=0.99, epsilon_start=1, epsilon_end=0.1, n_episodes=n_episodes, memory_size=memory_size, update_target_every=10, frame_skip=4)
 
     # Start training
     batch_size = 32
    
-    checkpoint_dir = "F:\FP_Agents\Breakout\dcqn"
+    checkpoint_dir = "F:\FP_Agents\Centipede\dtqn"
     if mode == "train":
         print("Starting Training...")
-        agent.train(n_episodes=10000, batch_size=32)
+        agent.train(n_episodes=n_episodes, batch_size=32)
         plot_metrics(agent.metrics)
     elif mode == "eval":
         print("Starting Evaluation...")

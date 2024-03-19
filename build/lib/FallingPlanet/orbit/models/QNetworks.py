@@ -84,6 +84,31 @@ class PatchEmbedding(nn.Module):
         x = self.projection(x)
         x = x.view(batch_size, self.num_patches, nf, self.embed_size).permute(0, 2, 1, 3)
         return x
+    
+class EfficientPatchEmbedding(nn.Module):
+    def __init__(self, patch_size, embed_size, num_patches, pooling_size=2):
+        super(EfficientPatchEmbedding, self).__init__()
+        self.patch_size = patch_size
+        self.embed_size = embed_size
+        self.num_patches = num_patches
+        self.pooling = nn.AvgPool2d(pooling_size, stride=pooling_size)
+        reduced_patch_size = (patch_size // pooling_size) ** 2
+        self.projection = nn.Linear(reduced_patch_size, embed_size)
+
+    def forward(self, x):
+        # x: [batch_size, num_stacked_frames, height, width]
+        batch_size, nf, h, w = x.size()
+        # Create patches
+        x = x.unfold(2, self.patch_size, self.patch_size).unfold(3, self.patch_size, self.patch_size)
+        x = x.contiguous().view(batch_size * nf * self.num_patches, 1, self.patch_size, self.patch_size)
+        # Pool each patch to reduce dimensions
+        x = self.pooling(x)
+        # Flatten pooled patches
+        x = x.view(batch_size, nf * self.num_patches, -1)
+        # Project patches to embeddings
+        x = self.projection(x)
+        x = x.view(batch_size, nf, self.num_patches, self.embed_size).permute(0, 1, 3, 2).contiguous()
+        return x
 
 
 class DTQN(nn.Module):
@@ -126,7 +151,7 @@ class DTQN(nn.Module):
         
         x = x.reshape(x.size(0), -1, self.embed_size)
         # Add positional embeddings
-        x = x + self.positional_embeddings
+        
 
         # Transformer encoder
         x = self.transformer_encoder(x)
