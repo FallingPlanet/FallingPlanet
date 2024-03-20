@@ -21,6 +21,7 @@ import sys
 import os
 from torch.utils.tensorboard import SummaryWriter
 
+
 class EfficientReplayBuffer:
     def __init__(self, capacity, state_shape, action_shape, reward_shape=(1,), done_shape=(1,), device="cuda"):
         self.device = device
@@ -56,7 +57,7 @@ class EfficientReplayBuffer:
 
 class Agent:
     def __init__(self, env_name, policy_model, target_model, lr, gamma, epsilon_start, epsilon_end, n_episodes, memory_size, update_target_every,frame_skip):
-        self.env = gym.make(env_name, render_mode="human",full_action_space=False)
+        self.env = gym.make(env_name, render_mode=None,full_action_space=False)
         self.env = FrameStack(self.env,4)
         self.env.seed(42)
         
@@ -385,7 +386,7 @@ if __name__ == '__main__':
     env = FrameStack(env,4)
     n_actions = env.action_space.n
     
-    n_observation = 6  # Assuming a stack of 3 frames if not using frame stacking, adjust accordingly
+    n_observation = 18 # Assuming a stack of 3 frames if not using frame stacking, adjust accordingly
 
     # Instantiate policy and target models
     #policy_model = DCQN(n_actions=n_actions)

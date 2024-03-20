@@ -20,6 +20,8 @@ from tensordict import TensorDict
 import sys
 import os
 from torch.utils.tensorboard import SummaryWriter
+os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
+torch.autograd.set_detect_anomaly(True)
 
 class EfficientReplayBuffer:
     def __init__(self, capacity, state_shape, action_shape, reward_shape=(1,), done_shape=(1,), device="cuda"):
@@ -385,7 +387,7 @@ if __name__ == '__main__':
     env = FrameStack(env,4)
     n_actions = env.action_space.n
     
-    n_observation = 6  # Assuming a stack of 3 frames if not using frame stacking, adjust accordingly
+    n_observation = 18 # Assuming a stack of 3 frames if not using frame stacking, adjust accordingly
 
     # Instantiate policy and target models
     #policy_model = DCQN(n_actions=n_actions)

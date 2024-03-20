@@ -62,8 +62,64 @@ class DCQN(nn.Module):
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.nn import TransformerEncoder, TransformerEncoderLayer
+from torch.nn import TransformerEncoder, TransformerEncoderLayer, LayerNorm
 
+class GatedTransformerXLLayer(nn.Module):
+    def __init__(self, d_model, nhead, dim_feedforward=2048, dropout=0.1):
+        super(GatedTransformerXLLayer, self).__init__()
+        self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
+        self.linear1 = nn.Linear(d_model, dim_feedforward)
+        self.dropout = nn.Dropout(dropout)
+        self.linear2 = nn.Linear(dim_feedforward, d_model)
+
+        self.norm1 = LayerNorm(d_model)
+        self.norm2 = LayerNorm(d_model)
+        self.norm3 = LayerNorm(d_model)
+
+        self.dropout1 = nn.Dropout(dropout)
+        self.dropout2 = nn.Dropout(dropout)
+
+        self.activation = F.relu
+
+        # Gating mechanism: two gates for the self-attention and feed-forward
+        self.gate1 = nn.Linear(d_model * 2, d_model)
+        self.gate2 = nn.Linear(d_model * 2, d_model)
+
+    def forward(self, src, src_mask=None, src_key_padding_mask=None):
+        # Self-attention sublayer with gating
+        src2 = self.norm1(src)
+        q = k = v = src2
+        src2, _ = self.self_attn(q, k, v, attn_mask=src_mask,
+                                 key_padding_mask=src_key_padding_mask)
+        gate1_input = torch.cat([src, src2], dim=-1)
+        gate1_output = self.gate1(gate1_input)
+        src = src + self.dropout1(gate1_output)
+
+        # Feed-forward sublayer with gating
+        src2 = self.norm2(src)
+        src2 = self.linear2(self.dropout(self.activation(self.linear1(src2))))
+        gate2_input = torch.cat([src, src2], dim=-1)
+        gate2_output = self.gate2(gate2_input)
+        src = src + self.dropout2(gate2_output)
+
+        return self.norm3(src)
+
+class GatedTransformerXL(nn.Module):
+    def __init__(self, d_model, nhead, num_layers, dim_feedforward=2048, dropout=0.1):
+        super(GatedTransformerXL, self).__init__()
+        self.layers = nn.ModuleList([
+            GatedTransformerXLLayer(d_model, nhead, dim_feedforward, dropout)
+            for _ in range(num_layers)
+        ])
+        self.num_layers = num_layers
+
+    def forward(self, src, mask=None, src_key_padding_mask=None):
+        output = src
+
+        for mod in self.layers:
+            output = mod(output, src_mask=mask, src_key_padding_mask=src_key_padding_mask)
+
+        return output
 class PatchEmbedding(nn.Module):
     def __init__(self, patch_size, embed_size, num_patches):
         super(PatchEmbedding, self).__init__()
@@ -128,9 +184,8 @@ class DTQN(nn.Module):
         self.positional_embeddings = nn.Parameter(torch.randn(1, num_stacked_frames*self.num_patches, embed_size))
 
         # Transformer Encoder Layer
-        self.transformer_encoder = TransformerEncoder(
-            TransformerEncoderLayer(d_model=embed_size, nhead=num_heads, batch_first=True),
-            num_layers=num_layers
+        self.transformer_encoder = GatedTransformerXL(
+            d_model=embed_size, nhead=num_heads, num_layers=num_layers
         )
 
         # Fully connected layers
