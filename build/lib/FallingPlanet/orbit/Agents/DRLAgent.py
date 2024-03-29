@@ -57,7 +57,7 @@ class EfficientReplayBuffer:
 
 class Agent:
     def __init__(self, env_name, policy_model, target_model, lr, gamma, epsilon_start, epsilon_end, n_episodes, memory_size, update_target_every,frame_skip):
-        self.env = gym.make(env_name, render_mode="human",full_action_space=False)
+        self.env = gym.make(env_name, render_mode=None,full_action_space=False)
         self.env = FrameStack(self.env,4)
         self.env.seed(42)
         
@@ -381,7 +381,7 @@ if __name__ == '__main__':
     if len(sys.argv) > 1:
         mode = sys.argv[1]  # Assume the second argument specifies mode
     # Initialize environment and model
-    env_name = "ALE/Asteroids-v5"
+    env_name = "ALE/Centipede-v5"
     env = gym.make(env_name)
     env = FrameStack(env,4)
     n_actions = env.action_space.n
@@ -389,10 +389,10 @@ if __name__ == '__main__':
     n_observation = 18 # Assuming a stack of 3 frames if not using frame stacking, adjust accordingly
 
     # Instantiate policy and target models
-    policy_model = DCQN(n_actions=n_actions)
-    target_model = DCQN(n_actions=n_actions)  # Clone of policy model
-    #policy_model = DTQN(num_actions=n_observation, embed_size=512, num_heads=16, num_layers=3,patch_size=16)  # Example values, adjust as needed
-    #target_model = DTQN(num_actions=n_observation, embed_size=512, num_heads=16, num_layers=3,patch_size=16)
+    #policy_model = DCQN(n_actions=n_actions)
+    #target_model = DCQN(n_actions=n_actions)  # Clone of policy model
+    policy_model = DTQN(num_actions=n_observation, embed_size=512, num_heads=16, num_layers=3,patch_size=16)  # Example values, adjust as needed
+    target_model = DTQN(num_actions=n_observation, embed_size=512, num_heads=16, num_layers=3,patch_size=16)
     # Instantiate the agent
     n_episodes = 10001
     memory_size = 100000
@@ -401,7 +401,7 @@ if __name__ == '__main__':
     # Start training
     batch_size = 32
    
-    checkpoint_dir = "F:\FP_Agents\Asteroids\dcqn"
+    checkpoint_dir = "F:\FP_Agents\Centipede\dtqn"
     if mode == "train":
         print("Starting Training...")
         agent.train(n_episodes=n_episodes, batch_size=32)

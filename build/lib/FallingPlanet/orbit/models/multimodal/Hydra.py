@@ -3,84 +3,114 @@ import torch.nn as nn
 from transformers import ViTModel, ViTFeatureExtractor, DeiTForImageClassification, BertModel, DeiTModel
 from FallingPlanet.orbit.models.AuTransformer import FPATF_Tiny
 from FallingPlanet.orbit.models.BertFineTuneForSequenceClassification import BertFineTuneTiny
-from FallingPlanet.orbit.models.DeiTFineTuneForImageClassification import DeitFineTuneTiny
-from FallingPlanet.orbit.utils import Tokenizers
+from FallingPlanet.orbit.models.DeiTFineTuneForImageClassification import FPDeitFineTuneTiny
 import torch.nn.functional as F
 
-class HydraTiny(nn.Module):
-    def __init__(self, num_classes, **kwargs):
-        super(HydraTiny, self).__init__()
-        
 
-        # Assuming the vision model is a Vision Transformer
-        self.vision_model = ViTModel.from_pretrained('facebook/deit-tiny-patch16-224')
-        v_classifier = nn.Sequential(
-            nn.Linear(192, 512),
-            nn.ReLU(),
-            nn.Linear(512, 256),
-            nn.ReLU(),
-            nn.Linear(256,num_classes)
-            
-        )
+
+class FusionLayer(nn.Module):
+    def __init__(self, vision_dim, text_dim, audio_dim, unified_dim, vision_label_map, text_label_map, audio_label_map):
+        super(FusionLayer, self).__init__()
+        self.vision_projection = nn.Linear(vision_dim, unified_dim)
+        self.text_projection = nn.Linear(text_dim, unified_dim)
+        self.audio_projection = nn.Linear(audio_dim, unified_dim)
+        self.vision_label_map = vision_label_map
+        self.text_label_map = text_label_map
+        self.audio_label_map = audio_label_map
+
+    def forward(self, vision_logits, text_input, audio_input):
+        # Map vision logits to the unified label space
+        vision_labels = [self.vision_label_map[label] for label in vision_logits.argmax(dim=1)]
+        vision_projected = self.vision_projection(vision_logits)
+
+        # Map text logits to the unified label space
         
-        
-        # Text model placeholder initialization (adjust with actual model)
-        self.text_model = BertModel.from_pretrained("prajjwal1/bert-tiny")
-        
-        # Audio model (FPATF_Tiny) initialization
-        self.audio_model = FPATF_Tiny(target_channels=4,num_classes=10)
-        
-        if not kwargs.get('requires_grad', True):
-            for model in [self.vision_model, self.text_model, self.audio_model]:
-                for param in model.parameters():
-                    param.requires_grad = False
-            
-            # Process vision inputs (a list of frames)
-            self.audio_model.eval()
-            self.text_model.eval()
-            self.vision_model.eval()
+        text_outputs = self.text_model(input_ids=text_input[0], attention_mask=text_input[1])
+        text_labels = [self.text_label_map[label] for label in text_outputs.pooler_output.argmax(dim=1)]
+        text_projected = self.text_projection(text_outputs.pooler_output)
+
+        # Map audio logits to the unified label space
+        audio_labels = [self.audio_label_map[label] for label in audio_input.argmax(dim=1)]
+        audio_projected = self.audio_projection(audio_input)
+
+        # Fuse outputs
+        fused_features = torch.cat([vision_projected, text_projected, audio_projected], dim=1)
+
+        return fused_features, vision_labels, text_labels, audio_labels
+
+class HydraTiny(nn.Module):
+    def __init__(self, num_classes, feature_dim,text_label_map,vision_label_map,audio_label_map, requires_grad=False):
+        super(HydraTiny, self).__init__()
+
+        # Vision model initialization with DeiT
+        self.vision_model = FPDeitFineTuneTiny(num_labels=[7])
+        if not requires_grad:
+            for param in self.vision_model.parameters():
+                param.requires_grad = False
        
         
+        # Text model initialization
+        self.text_model = BertFineTuneTiny(num_labels=[num_classes])
+        if not requires_grad:
+            for param in self.text_model.parameters():
+                param.requires_grad = False
 
-        
-        # Fusion mechanism (adjust dimensions as needed)
-        self.fusion_layer = FusionLayer(vision_dim=7, text_dim = 9, audio_dim = 8, unified_dim=num_classes)
-        f_transformer_layer_1 = nn.TransformerEncoderLayer(d_model = 512,nhead=8, dim_feedforward=1024, dropout = .01)
-        self.f_transformer_1 = nn.TransformerEncoder(f_transformer_layer_1, num_layers = 6)
-        self.f_layer_norm = nn.layer_norm = nn.LayerNorm(512)
-        self.f_fc = nn.Linear(512,256)
-        f_transformer_layer_2 = nn.TransformerEncoderLayer(d_model = 256, nhead=8, dim_feedforward = 512, dropout = .01)
-        self.f_transformer_2 = nn.TransformerEncoder(f_transformer_layer_2, num_layers = 2)
-        self.f_fc2 = nn.Linear(256,128)
+        # Audio model initialization with custom specifications
+        self.audio_model = FPATF_Tiny(
+            target_channels=feature_dim, 
+            num_classes=num_classes, 
+            num_heads=16, 
+            dim_feedforward=1024, 
+            num_layers=4, 
+            dropout=0.1
+        )
+        if not requires_grad:
+            for param in self.audio_model.parameters():
+                param.requires_grad = False
+
+        # Fusion layer initialization
+        self.fusion_layer = FusionLayer(vision_dim=768, text_dim=768, audio_dim=feature_dim, unified_dim=768, vision_label_map=vision_label_map, text_label_map=text_label_map, audio_label_map=audio_label_map)
+
+        # Additional layers for processing fused features
+        self.f_transformer_1 = self.create_transformer_encoder_layer(512, 8, 1024, 6)
+        self.f_layer_norm = nn.LayerNorm(512)
+        self.f_fc = nn.Linear(512, 256)
+        self.f_transformer_2 = self.create_transformer_encoder_layer(256, 8, 512, 2)
+        self.f_fc2 = nn.Linear(256, 128)
         self.f_fc3 = nn.Linear(128, num_classes)
-
         
-        self.num_classes = num_classes
-    def load_modal_state_dicts(self, text_dict=None, audio_dict=None, vision_dict=None):
-        """Loads state dictionaries into the respective models."""
+    def load_modal_state_dicts(self, text_dict=None, vision_dict=None, audio_dict=None):
         if text_dict:
             self.text_model.load_state_dict(torch.load(text_dict))
-        if audio_dict:
-            self.audio_model.load_state_dict(torch.load(audio_dict))
         if vision_dict:
             self.vision_model.load_state_dict(torch.load(vision_dict))
-    def forward(self, vision_inputs, text_input, audio_input):
-        # Process vision inputs
-        vision_features = [self.vision_model(pixel_values=frame).last_hidden_state for frame in vision_inputs]
-        vision_logits = torch.mean(torch.stack(vision_features), dim=0)
+        if audio_dict:
+            self.audio_model.load_state_dict(torch.load(audio_dict))
+            
+    def create_transformer_encoder_layer(self, d_model, nhead, dim_feedforward, num_layers, dropout=0.01):
+        layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, dim_feedforward=dim_feedforward, dropout=dropout)
+        return nn.TransformerEncoder(layer, num_layers=num_layers)
+
+    def forward(self, vision_inputs, text_inputs, audio_input):
+        if isinstance(vision_inputs, list):
+            vision_inputs = torch.stack(vision_inputs)  # Converts list to tensor of shape (batch_size, C, H, W)
+
+        # Process vision inputs as a batch
+        vision_features = self.vision_model(pixel_values=vision_inputs).last_hidden_state
+        vision_logits = torch.mean(vision_features, dim=1)
 
         # Process text inputs
-        input_ids, attention_masks = Tokenizers.BertTiny_tokenize(text_input, max_length=256)
-        text_outputs = self.text_model(input_ids=input_ids, attention_mask=attention_masks)
-        text_logits = text_outputs.pooler_output  # Assuming using pooler_output as logits
+        text_outputs = self.text_model(input_ids=text_inputs[0], attention_mask=text_inputs[1])
+        text_logits = text_outputs.logits 
+        text_logits = text_outputs.pooler_output
 
         # Process audio inputs
         audio_logits = self.audio_model(audio_input)
 
-        # Fuse the outputs
-        fused_features = self.fusion_layer(vision_logits, text_logits, audio_logits)
+        # Fuse outputs
+        fused_features, vision_labels, text_labels, audio_labels = self.fusion_layer(vision_logits, text_logits, audio_logits)
 
-        # Pass through the transformer and linear layers
+        # Process fused features through transformers and linear layers
         x = self.f_transformer_1(fused_features)
         x = self.f_layer_norm(x)
         x = F.relu(self.f_fc(x))
@@ -88,27 +118,7 @@ class HydraTiny(nn.Module):
         x = F.relu(self.f_fc2(x))
         output = self.f_fc3(x)
 
-        return output
-
-
-class FusionLayer(nn.Module):
-    def __init__(self, vision_dim, text_dim, audio_dim, unified_dim):
-        super(FusionLayer, self).__init__()
-        self.unified_dim = unified_dim
-        # Create projection layers for each modality to project them to a unified dimension
-        self.vision_projection = nn.Linear(vision_dim, unified_dim)
-        self.text_projection = nn.Linear(text_dim, unified_dim)
-        self.audio_projection = nn.Linear(audio_dim, unified_dim)
-
-    def forward(self, vision_logits, text_logits, audio_logits):
-        # Project each modality's output to the unified dimension
-        vision_projected = self.vision_projection(vision_logits)
-        text_projected = self.text_projection(text_logits)
-        audio_projected = self.audio_projection(audio_logits)
-
-        # Concatenate along the feature dimension
-        fused = torch.cat([vision_projected, text_projected, audio_projected], dim=1)
-        return fused
+        return output, vision_labels, text_labels, audio_labels
 
 
         
@@ -119,31 +129,7 @@ class FusionLayer(nn.Module):
         
         
         
-def count_parameters(model):
-    return sum(p.numel() for p in model.parameters())
 
-def count_trainable_parameters(model):
-    return sum(p.numel() for p in model.parameters() if p.requires_grad)
-
-# Instantiate the model
-model = HydraTiny(num_classes=9)
-
-# Initialize individual models
-vision_model = DeitFineTuneTiny(num_labels=[9])
-text_model = BertFineTuneTiny(num_labels=[9])
-audio_model = FPATF_Tiny(target_channels=4, num_classes=9)
-
-# Function to print model parameters
-def print_model_params(model, model_name):
-    total_params = sum(p.numel() for p in model.parameters())
-    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f"{model_name} - Total parameters: {total_params}, Trainable parameters: {trainable_params}")
-
-# Printing parameters for each model
-print_model_params(vision_model, "Vision Model")
-print_model_params(text_model, "Text Model")
-print_model_params(audio_model, "Audio Model")
-print_model_params(model, "HydraTiny Main Model")
        
        
 """class Penalty_Layer(nn.Module):

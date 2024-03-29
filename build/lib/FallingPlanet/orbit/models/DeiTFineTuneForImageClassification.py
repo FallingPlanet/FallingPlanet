@@ -77,4 +77,31 @@ class DeitFineTuneSmall(nn.Module):
             all_logits = self.classifier(pooled_output)
             
         return all_logits   
-            
+
+import torch
+import torch.nn as nn
+from transformers import ViTModel
+from torchvision import transforms
+
+class FPDeitFineTuneTiny(nn.Module):
+    def __init__(self, num_labels, image_size=224, from_saved_weights=None):
+        super(FPDeitFineTuneTiny, self).__init__()
+        self.vit = ViTModel.from_pretrained('facebook/deit-tiny-patch16-224')
+
+        if from_saved_weights:
+            self.vit.load_state_dict(torch.load(from_saved_weights))
+
+        self.classifier = nn.Sequential(
+            nn.Linear(192, 512),  # Adjusted to match DeiT-Tiny's output
+            nn.ReLU(),            # Activation function
+            nn.Linear(512, 256),  # Second additional dense layer
+            nn.ReLU(),            # Activation function
+            nn.Linear(256, num_labels)  # Final layer for classification
+        )
+    
+    
+    def forward(self, pixel_values):
+        outputs = self.vit(pixel_values=pixel_values)
+        pooled_output = outputs.last_hidden_state[:, 0]  # Adjusted to use the correct output
+        logits = self.classifier(pooled_output)
+        return logits
