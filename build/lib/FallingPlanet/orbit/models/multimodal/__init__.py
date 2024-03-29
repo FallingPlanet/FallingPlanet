@@ -1,1 +1,1 @@
-from multimodal import Chimera,Hydra
+from .Hydra import HydraTiny

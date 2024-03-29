@@ -141,30 +141,6 @@ class PatchEmbedding(nn.Module):
         x = x.view(batch_size, self.num_patches, nf, self.embed_size).permute(0, 2, 1, 3)
         return x
     
-class EfficientPatchEmbedding(nn.Module):
-    def __init__(self, patch_size, embed_size, num_patches, pooling_size=2):
-        super(EfficientPatchEmbedding, self).__init__()
-        self.patch_size = patch_size
-        self.embed_size = embed_size
-        self.num_patches = num_patches
-        self.pooling = nn.AvgPool2d(pooling_size, stride=pooling_size)
-        reduced_patch_size = (patch_size // pooling_size) ** 2
-        self.projection = nn.Linear(reduced_patch_size, embed_size)
-
-    def forward(self, x):
-        # x: [batch_size, num_stacked_frames, height, width]
-        batch_size, nf, h, w = x.size()
-        # Create patches
-        x = x.unfold(2, self.patch_size, self.patch_size).unfold(3, self.patch_size, self.patch_size)
-        x = x.contiguous().view(batch_size * nf * self.num_patches, 1, self.patch_size, self.patch_size)
-        # Pool each patch to reduce dimensions
-        x = self.pooling(x)
-        # Flatten pooled patches
-        x = x.view(batch_size, nf * self.num_patches, -1)
-        # Project patches to embeddings
-        x = self.projection(x)
-        x = x.view(batch_size, nf, self.num_patches, self.embed_size).permute(0, 1, 3, 2).contiguous()
-        return x
 
 
 class DTQN(nn.Module):
@@ -176,7 +152,7 @@ class DTQN(nn.Module):
         self.frame_input_dim = 84 * 84  # For one frame
         self.total_input_dim = self.frame_input_dim * num_stacked_frames  # For all stacked frames
         self.num_patches = (84 // patch_size) ** 2
-
+        
         # Patch embedding
         self.patch_embedding = PatchEmbedding(patch_size, embed_size, self.num_patches)
 

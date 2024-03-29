@@ -326,7 +326,7 @@ class Agent:
         self.policy_model.eval()  # Ensure the model is in evaluation mode
 
         # Evaluate the model
-        avg_reward = self.evaluate(n_eval_episodes=1)
+        avg_reward = self.evaluate(n_eval_episodes=5)
         print(f"Evaluated {checkpoint_path}: Average Reward = {avg_reward}")
         
 def plot_metrics(metrics):
@@ -377,7 +377,7 @@ def plot_metrics(metrics):
 
 
 if __name__ == '__main__':
-    mode = "train"  # Default mode
+    mode = "eval"  # Default mode
     if len(sys.argv) > 1:
         mode = sys.argv[1]  # Assume the second argument specifies mode
     # Initialize environment and model

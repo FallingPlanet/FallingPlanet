@@ -3,16 +3,14 @@ import torch.nn as nn
 from transformers import ViTModel, ViTFeatureExtractor, DeiTForImageClassification, BertModel, DeiTModel
 from FallingPlanet.orbit.models.AuTransformer import FPATF_Tiny
 from FallingPlanet.orbit.models.BertFineTuneForSequenceClassification import BertFineTuneTiny
+from FallingPlanet.orbit.models.DeiTFineTuneForImageClassification import DeitFineTuneTiny
 from FallingPlanet.orbit.utils import Tokenizers
 import torch.nn.functional as F
 
 class HydraTiny(nn.Module):
     def __init__(self, num_classes, **kwargs):
         super(HydraTiny, self).__init__()
-        text_dict = kwargs.get('text_model_dict',False)
-        vision_dict = kwargs.get('vision_model_dict',False)
-        audio_dict = kwargs.get('audio_model_dict',False)
-        requires_grad = kwargs.get('requires_grad',False)
+        
 
         # Assuming the vision model is a Vision Transformer
         self.vision_model = ViTModel.from_pretrained('facebook/deit-tiny-patch16-224')
@@ -32,7 +30,7 @@ class HydraTiny(nn.Module):
         # Audio model (FPATF_Tiny) initialization
         self.audio_model = FPATF_Tiny(target_channels=4,num_classes=10)
         
-        if not requires_grad:
+        if not kwargs.get('requires_grad', True):
             for model in [self.vision_model, self.text_model, self.audio_model]:
                 for param in model.parameters():
                     param.requires_grad = False
@@ -41,8 +39,7 @@ class HydraTiny(nn.Module):
             self.audio_model.eval()
             self.text_model.eval()
             self.vision_model.eval()
-        if text_dict != False:
-            torch.load(text_dict)
+       
         
 
         
@@ -59,7 +56,14 @@ class HydraTiny(nn.Module):
 
         
         self.num_classes = num_classes
-
+    def load_modal_state_dicts(self, text_dict=None, audio_dict=None, vision_dict=None):
+        """Loads state dictionaries into the respective models."""
+        if text_dict:
+            self.text_model.load_state_dict(torch.load(text_dict))
+        if audio_dict:
+            self.audio_model.load_state_dict(torch.load(audio_dict))
+        if vision_dict:
+            self.vision_model.load_state_dict(torch.load(vision_dict))
     def forward(self, vision_inputs, text_input, audio_input):
         # Process vision inputs
         vision_features = [self.vision_model(pixel_values=frame).last_hidden_state for frame in vision_inputs]
@@ -124,13 +128,22 @@ def count_trainable_parameters(model):
 # Instantiate the model
 model = HydraTiny(num_classes=9)
 
-# Calculate total and trainable parameters
-total_params = count_parameters(model)
-trainable_params = count_trainable_parameters(model)
+# Initialize individual models
+vision_model = DeitFineTuneTiny(num_labels=[9])
+text_model = BertFineTuneTiny(num_labels=[9])
+audio_model = FPATF_Tiny(target_channels=4, num_classes=9)
 
-print(f"Total parameters: {total_params}")
-print(f"Trainable parameters: {trainable_params}")
-       
+# Function to print model parameters
+def print_model_params(model, model_name):
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"{model_name} - Total parameters: {total_params}, Trainable parameters: {trainable_params}")
+
+# Printing parameters for each model
+print_model_params(vision_model, "Vision Model")
+print_model_params(text_model, "Text Model")
+print_model_params(audio_model, "Audio Model")
+print_model_params(model, "HydraTiny Main Model")
        
        
 """class Penalty_Layer(nn.Module):

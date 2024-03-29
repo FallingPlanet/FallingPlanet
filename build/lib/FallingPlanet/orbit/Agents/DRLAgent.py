@@ -20,8 +20,7 @@ from tensordict import TensorDict
 import sys
 import os
 from torch.utils.tensorboard import SummaryWriter
-os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
-torch.autograd.set_detect_anomaly(True)
+
 
 class EfficientReplayBuffer:
     def __init__(self, capacity, state_shape, action_shape, reward_shape=(1,), done_shape=(1,), device="cuda"):
@@ -327,7 +326,7 @@ class Agent:
         self.policy_model.eval()  # Ensure the model is in evaluation mode
 
         # Evaluate the model
-        avg_reward = self.evaluate(n_eval_episodes=1)
+        avg_reward = self.evaluate(n_eval_episodes=5)
         print(f"Evaluated {checkpoint_path}: Average Reward = {avg_reward}")
         
 def plot_metrics(metrics):
@@ -378,11 +377,11 @@ def plot_metrics(metrics):
 
 
 if __name__ == '__main__':
-    mode = "train"  # Default mode
+    mode = "eval"  # Default mode
     if len(sys.argv) > 1:
         mode = sys.argv[1]  # Assume the second argument specifies mode
     # Initialize environment and model
-    env_name = "ALE/Centipede-v5"
+    env_name = "ALE/Asteroids-v5"
     env = gym.make(env_name)
     env = FrameStack(env,4)
     n_actions = env.action_space.n
@@ -390,10 +389,10 @@ if __name__ == '__main__':
     n_observation = 18 # Assuming a stack of 3 frames if not using frame stacking, adjust accordingly
 
     # Instantiate policy and target models
-    #policy_model = DCQN(n_actions=n_actions)
-    #target_model = DCQN(n_actions=n_actions)  # Clone of policy model
-    policy_model = DTQN(num_actions=n_observation, embed_size=512, num_heads=16, num_layers=3,patch_size=16)  # Example values, adjust as needed
-    target_model = DTQN(num_actions=n_observation, embed_size=512, num_heads=16, num_layers=3,patch_size=16)
+    policy_model = DCQN(n_actions=n_actions)
+    target_model = DCQN(n_actions=n_actions)  # Clone of policy model
+    #policy_model = DTQN(num_actions=n_observation, embed_size=512, num_heads=16, num_layers=3,patch_size=16)  # Example values, adjust as needed
+    #target_model = DTQN(num_actions=n_observation, embed_size=512, num_heads=16, num_layers=3,patch_size=16)
     # Instantiate the agent
     n_episodes = 10001
     memory_size = 100000
@@ -402,7 +401,7 @@ if __name__ == '__main__':
     # Start training
     batch_size = 32
    
-    checkpoint_dir = "F:\FP_Agents\Centipede\dtqn"
+    checkpoint_dir = "F:\FP_Agents\Asteroids\dcqn"
     if mode == "train":
         print("Starting Training...")
         agent.train(n_episodes=n_episodes, batch_size=32)

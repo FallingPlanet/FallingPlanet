@@ -152,7 +152,7 @@ class DTQN(nn.Module):
         self.frame_input_dim = 84 * 84  # For one frame
         self.total_input_dim = self.frame_input_dim * num_stacked_frames  # For all stacked frames
         self.num_patches = (84 // patch_size) ** 2
-
+        
         # Patch embedding
         self.patch_embedding = PatchEmbedding(patch_size, embed_size, self.num_patches)
 
