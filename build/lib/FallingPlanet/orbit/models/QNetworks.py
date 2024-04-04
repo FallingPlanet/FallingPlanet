@@ -120,44 +120,62 @@ class GatedTransformerXL(nn.Module):
             output = mod(output, src_mask=mask, src_key_padding_mask=src_key_padding_mask)
 
         return output
+    
 class PatchEmbedding(nn.Module):
-    def __init__(self, patch_size, embed_size, num_patches):
+    def __init__(self, patch_size, embed_size, img_size=(84, 84)):
         super(PatchEmbedding, self).__init__()
         self.patch_size = patch_size
         self.embed_size = embed_size
-        self.num_patches = num_patches
-        # Since channel is always 1, we remove it from the calculation
+        # Direct use of img_size to calculate the number of patches within the class
+        self.num_patches = (img_size[0] // patch_size) * (img_size[1] // patch_size)
         self.projection = nn.Linear(patch_size * patch_size, embed_size)
 
     def forward(self, x):
-        # Assuming x: [batch_size, num_stacked_frames, height, width], removing channels
-        batch_size, nf, h, w = x.size()
-        # Create patches
-        x = x.unfold(2, self.patch_size, self.patch_size).unfold(3, self.patch_size, self.patch_size)
-        x = x.contiguous().view(batch_size, nf, self.num_patches, -1)  # Flatten patches
-        x = x.permute(0, 2, 1, 3).contiguous().view(batch_size * self.num_patches * nf, -1)
-        # Project patches to embeddings
+        batch_size, num_frames, height, width = x.size()
+        # Reshaping logic remains inside the class without exposing num_patches outside
+        x = x.unfold(2, self.patch_size, self.patch_size) \
+             .unfold(3, self.patch_size, self.patch_size) \
+             .contiguous() \
+             .view(batch_size, num_frames, -1, self.patch_size * self.patch_size)
+        # Flatten patches and project to embeddings
         x = self.projection(x)
-        x = x.view(batch_size, self.num_patches, nf, self.embed_size).permute(0, 2, 1, 3)
+        # Assuming the -1 automatically calculates the correct number of patches
+        x = x.view(batch_size, num_frames, -1, self.embed_size)
         return x
-    
 
+
+    
+class AttentionPooling(nn.Module):
+    def __init__(self, embed_dim):
+        super(AttentionPooling, self).__init__()
+        self.query = nn.Parameter(torch.randn(embed_dim, 1))
+
+    def forward(self, x):
+        # x: [batch_size, seq_len, embed_dim]
+        attn_weights = torch.bmm(x, self.query.unsqueeze(0).repeat(x.size(0), 1, 1))
+        attn_weights = F.softmax(attn_weights.squeeze(2), dim=1)
+        # Compute weighted sum (context vector)
+        context = torch.bmm(x.transpose(1, 2), attn_weights.unsqueeze(2)).squeeze(2)
+        return context
 
 class DTQN(nn.Module):
-    def __init__(self, num_actions, embed_size=528, num_heads=8, num_layers=1, fc1_out=512, fc2_out=128, fc_intermediate=256, num_stacked_frames=4, patch_size=6):
+    def __init__(self, num_actions, embed_size=528, num_heads=8, num_layers=1, fc1_out=512, fc2_out=256, fc_intermediate=256, num_stacked_frames=4, patch_size=6):
         super(DTQN, self).__init__()
         self.embed_size = embed_size
         self.num_stacked_frames = num_stacked_frames
         self.patch_size = patch_size
-        self.frame_input_dim = 84 * 84  # For one frame
-        self.total_input_dim = self.frame_input_dim * num_stacked_frames  # For all stacked frames
-        self.num_patches = (84 // patch_size) ** 2
+        self.img_size = (84, 84)  # Assuming fixed size for Atari frames
+        # Calculate num_patches based on a single frame's dimensions
+        self.num_patches = (self.img_size[0] // patch_size) * (self.img_size[1] // patch_size)
         
-        # Patch embedding
-        self.patch_embedding = PatchEmbedding(patch_size, embed_size, self.num_patches)
+        self.patch_embedding = PatchEmbedding(patch_size, embed_size)
+        self.attention_pooling = AttentionPooling(embed_size)
+        self.positional_embeddings = nn.Parameter(torch.randn(1, num_stacked_frames * self.num_patches, embed_size))
+        
+        # Calculate the total input feature dimension for the first fully connected layer
+        total_fc_input_dim = embed_size * self.num_patches * num_stacked_frames
+        self.fc1 = nn.Linear(total_fc_input_dim, fc1_out)
 
-        # Positional Embeddings
-        self.positional_embeddings = nn.Parameter(torch.randn(1, num_stacked_frames*self.num_patches, embed_size))
 
         # Transformer Encoder Layer
         self.transformer_encoder = GatedTransformerXL(
@@ -166,6 +184,7 @@ class DTQN(nn.Module):
 
         # Fully connected layers
         self.fc1 = nn.Linear(embed_size * num_stacked_frames * self.num_patches, fc1_out)
+        print(embed_size * num_stacked_frames * self.num_patches)
         self.fc2 = nn.Linear(fc1_out, fc2_out)
         self.fc3 = nn.Linear(fc2_out, fc_intermediate)
         self.fc_out = nn.Linear(fc_intermediate, num_actions)
@@ -181,14 +200,15 @@ class DTQN(nn.Module):
         x = self.patch_embedding(x)
         
         x = x.reshape(x.size(0), -1, self.embed_size)
-        # Add positional embeddings
         
+        # Add positional embeddings
+        x = x + self.positional_embeddings[:x.size(1), :]
 
         # Transformer encoder
         x = self.transformer_encoder(x)
 
         # Flatten the output for the fully connected layer
-        x = x.view(x.size(0), -1)
+        x = self.attention_pooling(x)
 
         # Fully connected layers
         x = F.relu(self.fc1(x))
@@ -198,8 +218,56 @@ class DTQN(nn.Module):
 
         return output
 
+class EfficientAttentionModel(nn.Module):
+    def __init__(self, input_dim, embed_size, num_actions, hidden_dim=1024, num_heads=4, num_layers=3, dropout=0.1):
+        super(EfficientAttentionModel, self).__init__()
+        self.input_dim = input_dim  # Flattened input dimension
+        self.embed_size = embed_size
+        self.num_actions = num_actions
+        self.hidden_dim = hidden_dim  # Dimension of the hidden layer in the MLP
+        
+        # Linear projection and positional encoding
+        self.projection = nn.Linear(input_dim, embed_size)
+        self.positional_embeddings = nn.Parameter(torch.randn(1, embed_size))
+        
+        # Gated Transformer XL Setup
+        self.transformer_encoder = GatedTransformerXL(
+            d_model=embed_size, nhead=num_heads, num_layers=num_layers, dim_feedforward=embed_size * 4, dropout=dropout
+        )
+        
+        # Attention Pooling
+        self.attention_pooling = AttentionPooling(embed_size)
+        
+        # Additional linear layers forming an MLP
+        self.fc_hidden = nn.Linear(embed_size, hidden_dim)
+        self.fc_hidden2 = nn.Linear(hidden_dim, hidden_dim // 2)  # Example of a second hidden layer, adjust based on needs
+        self.fc_out = nn.Linear(hidden_dim // 2, num_actions)
 
+        # Non-linearity
+        self.relu = nn.ReLU()
 
+    def forward(self, x):
+        # Flatten and project input
+        x = x.view(x.size(0), -1)
+        x = self.projection(x)
+        
+        # Add positional embeddings
+        x += self.positional_embeddings.expand_as(x)
+        
+        # Reshape for transformer
+        x = x.view(x.size(0), 1, -1)
+        
+        # Process through Gated Transformer XL
+        x = self.transformer_encoder(x)
+        
+        # Apply attention pooling
+        x = self.attention_pooling(x)
+        
+        # Process through the MLP
+        x = self.relu(self.fc_hidden(x))
+        x = self.relu(self.fc_hidden2(x))
+        x = self.fc_out(x)
+        return x
 
 
 
@@ -228,11 +296,13 @@ dcqn_model = DCQN(n_actions=n_actions)
 # Correct instantiation of the models
 dcqn_model = DCQN( n_actions=10)  # Example values, adjust as needed
 dtqn_model = DTQN(num_actions=6, embed_size=512, num_heads=16, num_layers=3,patch_size=16)  # Example values, adjust as needed
+edtqn = EfficientAttentionModel(num_actions=6,input_dim=84*84*4,embed_size=512,num_layers=5)
 
 # Now pass these instances to check_param_size, not the class names
 dcqn_param_size = check_param_size(dcqn_model)
 dtqn_param_size = check_param_size(dtqn_model)
 
+print(check_param_size(edtqn))
 print("DCQN Param Size:", dcqn_param_size)
 print("DTQN Param Size:", dtqn_param_size)
 

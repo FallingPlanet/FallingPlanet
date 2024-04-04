@@ -4,7 +4,7 @@ import torch.optim as optim
 import random
 from collections import deque
 import numpy as np
-from FallingPlanet.orbit.models.QNetworks import DCQN, DTQN
+from FallingPlanet.orbit.models.QNetworks import DCQN, DTQN, EfficientAttentionModel
 from torchvision import transforms
 import time
 import torch
@@ -22,41 +22,50 @@ import os
 from torch.utils.tensorboard import SummaryWriter
 
 
-class EfficientReplayBuffer:
-    def __init__(self, capacity, state_shape, action_shape, reward_shape=(1,), done_shape=(1,), device="cuda"):
+class SequentialReplayBuffer:
+    def __init__(self, sequence_length, batch_size, buffer_size, state_shape, action_dim, device):
+        self.sequence_length = sequence_length
+        self.batch_size = batch_size
+        self.buffer_size = buffer_size // sequence_length
+        self.state_shape = state_shape
+        self.action_dim = action_dim
         self.device = device
-        storage = LazyMemmapStorage(max_size=capacity)
-        self.replay_buffer = TensorDictReplayBuffer(
-            storage=storage,
-            sampler=SliceSampler(num_slices=4),
-            batch_size=32,  # Adjust based on your needs
-        )
-        # Initialize storage keys
-        self.replay_buffer.extend({
-            "states": torch.zeros((capacity, *state_shape), dtype=torch.float32, device=device),
-            "actions": torch.zeros((capacity, *action_shape), dtype=torch.float32, device=device),
-            "rewards": torch.zeros((capacity, *reward_shape), dtype=torch.float32, device=device),
-            "next_states": torch.zeros((capacity, *state_shape), dtype=torch.float32, device=device),
-            "dones": torch.zeros((capacity, *done_shape), dtype=torch.bool, device=device)
-        })
-
+        
+        self.buffer = deque(maxlen=self.buffer_size)
+        self.current_sequence = {'states': [], 'actions': [], 'rewards': [], 'next_states': [], 'dones': []}
+        
+    def _add_to_sequence(self, state, action, reward, next_state, done):
+        self.current_sequence['states'].append(state)
+        self.current_sequence['actions'].append(action)
+        self.current_sequence['rewards'].append(reward)
+        self.current_sequence['next_states'].append(next_state)
+        self.current_sequence['dones'].append(done)
+        
+        if len(self.current_sequence['states']) == self.sequence_length:
+            self.buffer.append({k: np.array(v) for k, v in self.current_sequence.items()})
+            self.current_sequence = {k: [] for k in self.current_sequence}
+    
     def add(self, state, action, reward, next_state, done):
-        # Add experience to the replay buffer
-        idx = self.replay_buffer.storage.size  # Get the next index to store data
-        self.replay_buffer.storage.set(idx, {
-            "states": state.to(self.device),
-            "actions": action.to(self.device),
-            "rewards": reward.to(self.device),
-            "next_states": next_state.to(self.device),
-            "dones": done.to(self.device)
-        })
-
+        self._add_to_sequence(state, action, reward, next_state, done)
+    
     def sample(self):
-        # Sample a batch of experiences
-        return self.replay_buffer.sample()
+        indices = np.random.choice(len(self.buffer), self.batch_size, replace=False)
+        sampled_sequences = [self.buffer[idx] for idx in indices]
+        
+        batch = {k: torch.tensor(np.concatenate([seq[k] for seq in sampled_sequences]), dtype=torch.float32).to(self.device) for k in self.current_sequence}
+        
+        # Convert actions, rewards, and dones to appropriate types
+        batch['actions'] = batch['actions'].long()
+        batch['rewards'] = batch['rewards'].float()
+        batch['dones'] = batch['dones'].float()
+        
+        return batch
+    
+    def __len__(self):
+        return len(self.buffer) * self.sequence_length
 
 class Agent:
-    def __init__(self, env_name, policy_model, target_model, lr, gamma, epsilon_start, epsilon_end, n_episodes, memory_size, update_target_every,frame_skip):
+    def __init__(self, env_name, policy_model, target_model, lr, gamma, epsilon_start, epsilon_end, n_episodes, memory_size, update_target_every,frame_skip,buffer_type = None):
         self.env = gym.make(env_name, render_mode=None,full_action_space=False)
         self.env = FrameStack(self.env,4)
         self.env.seed(42)
@@ -83,7 +92,11 @@ class Agent:
         self.n_actions = self.env.action_space.n
         self.n_episodes = n_episodes
         self.storage = LazyMemmapStorage(max_size=memory_size)
+        
         self.replay_buffer = TensorDictReplayBuffer(storage=self.storage, batch_size=64)
+        if buffer_type == "sequential":
+          
+            self.memory = SequentialReplayBuffer(sequence_length=4, batch_size=64, buffer_size=memory_size, state_shape=env.observation_space.shape, action_dim=env.action_space.n, device=self.device)
         # Metric Tracking
         self.metrics = {
             "rewards": [],
@@ -219,7 +232,7 @@ class Agent:
 
         target_q_values = rewards + self.gamma * next_q_values
         target_q_values = target_q_values.squeeze(-1)
-        loss = F.huber_loss(current_q_values, target_q_values)
+        loss = F.mse_loss(current_q_values, target_q_values)
         self.metrics["losses"].append(loss.item())
 
         self.optimizer.zero_grad()
@@ -229,7 +242,7 @@ class Agent:
         self.optimizer.step()
 
     def train(self, n_episodes, batch_size):
-        writer = SummaryWriter('runs/DTQN_10k_Centipede')
+        writer = SummaryWriter('runs/DCQN_10k_SpaceInvaders')
 
         for episode in range(n_episodes):
             start_time = time.time()
@@ -277,9 +290,9 @@ class Agent:
                 self.update_target_network()
 
             if episode % 500 == 0:  # Save the model every 500 episodes
-                self.save_model(f"F:\FP_Agents\Centipede\dtqn\_policy_model_episode_{episode}.pth")
+                self.save_model(f"F:\FP_Agents\SpaceInvaders\dcqn\_policy_model_episode_{episode}.pth")
             if episode == 100000:
-                self.save_model(f"F:\FP_Agents\Centipede\dtqn\_policy_model_episode_{episode}.pth")
+                self.save_model(f"F:\FP_Agents\SpaceInvaders\dcqn\_policy_model_episode_{episode}.pth")
             # Periodic evaluation
             if episode % 100 == 0 and episode > 0:  # Avoid evaluation at the very start
                 avg_reward = self.evaluate(n_eval_episodes=5)  # Adjust n_eval_episodes as needed
@@ -289,7 +302,7 @@ class Agent:
             print(f"Episode: {episode+1}, Total reward: {total_reward}, Epsilon: {self.epsilon}, Frames: {frame_count}, Loss: {self.metrics['losses'][-1] if self.metrics['losses'] else 'N/A'}")
 
             
-    def save_model(self, filename="F:\FP_Agents\Centipede\dtqn\_policy_model.pth"):
+    def save_model(self, filename="F:\FP_Agents\SpaceInvaders\dcqn\_policy_model.pth"):
         """Save the model's state dict and other relevant parameters."""
         checkpoint = {
             'model_state_dict': self.policy_model.state_dict(),
@@ -377,11 +390,11 @@ def plot_metrics(metrics):
 
 
 if __name__ == '__main__':
-    mode = "eval"  # Default mode
+    mode = "train"  # Default mode
     if len(sys.argv) > 1:
         mode = sys.argv[1]  # Assume the second argument specifies mode
     # Initialize environment and model
-    env_name = "ALE/Centipede-v5"
+    env_name = "ALE/SpaceInvaders-v5"
     env = gym.make(env_name)
     env = FrameStack(env,4)
     n_actions = env.action_space.n
@@ -389,19 +402,21 @@ if __name__ == '__main__':
     n_observation = 18 # Assuming a stack of 3 frames if not using frame stacking, adjust accordingly
 
     # Instantiate policy and target models
-    #policy_model = DCQN(n_actions=n_actions)
-    #target_model = DCQN(n_actions=n_actions)  # Clone of policy model
-    policy_model = DTQN(num_actions=n_observation, embed_size=512, num_heads=16, num_layers=3,patch_size=16)  # Example values, adjust as needed
-    target_model = DTQN(num_actions=n_observation, embed_size=512, num_heads=16, num_layers=3,patch_size=16)
+    policy_model = DCQN(n_actions=n_actions)
+    target_model = DCQN(n_actions=n_actions)  # Clone of policy model
+    #policy_model = DTQN(num_actions=n_observation, embed_size=512, num_heads=16, num_layers=3,patch_size=16)  # Example values, adjust as needed
+    #target_model = DTQN(num_actions=n_observation, embed_size=512, num_heads=16, num_layers=3,patch_size=16)
+    #policy_model = EfficientAttentionModel(num_actions=6,input_dim=84*84*4,embed_size=512,num_layers=5)
+    #target_model = EfficientAttentionModel(num_actions=6,input_dim=84*84*4,embed_size=512,num_layers=5)
     # Instantiate the agent
     n_episodes = 10001
     memory_size = 100000
-    agent = Agent(env_name=env_name, policy_model=policy_model, target_model=target_model, lr=1e-3, gamma=0.99, epsilon_start=1, epsilon_end=0.1, n_episodes=n_episodes, memory_size=memory_size, update_target_every=10, frame_skip=4)
+    agent = Agent(env_name=env_name, policy_model=policy_model, target_model=target_model, lr=1e-3, gamma=0.99, epsilon_start=1, epsilon_end=0.1, n_episodes=n_episodes, memory_size=memory_size, update_target_every=50, frame_skip=4,buffer_type="efficient")
 
     # Start training
     batch_size = 32
    
-    checkpoint_dir = "F:\FP_Agents\Centipede\dtqn"
+    checkpoint_dir = "F:\FP_Agents\SpaceInvaders\dcqn"
     if mode == "train":
         print("Starting Training...")
         agent.train(n_episodes=n_episodes, batch_size=32)

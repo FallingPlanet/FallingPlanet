@@ -1,9 +1,8 @@
 import torch
 import torch.nn as nn
-from transformers import ViTModel, ViTFeatureExtractor, DeiTForImageClassification, BertModel, DeiTModel
 from FallingPlanet.orbit.models.AuTransformer import FPATF_Tiny
 from FallingPlanet.orbit.models.BertFineTuneForSequenceClassification import BertFineTuneTiny
-from FallingPlanet.orbit.models.DeiTFineTuneForImageClassification import FPDeitFineTuneTiny
+from FallingPlanet.orbit.models.DeiTFineTuneForImageClassification import DeitFineTuneTiny
 import torch.nn.functional as F
 
 
@@ -17,33 +16,41 @@ class FusionLayer(nn.Module):
         self.vision_label_map = vision_label_map
         self.text_label_map = text_label_map
         self.audio_label_map = audio_label_map
+        self.unknown_label = unified_dim - 1  # Assign the last index to the "unknown" label
 
-    def forward(self, vision_logits, text_input, audio_input):
+    def forward(self, vision_logits, text_logits, audio_logits):
         # Map vision logits to the unified label space
-        vision_labels = [self.vision_label_map[label] for label in vision_logits.argmax(dim=1)]
-        vision_projected = self.vision_projection(vision_logits)
+        _, vision_indices = torch.max(vision_logits, dim=1)
+        vision_labels = [list(self.vision_label_map.keys())[list(self.vision_label_map.values()).index(i.item())] if i.item() in self.vision_label_map.values() else self.unknown_label for i in vision_indices]
 
         # Map text logits to the unified label space
-        
-        text_outputs = self.text_model(input_ids=text_input[0], attention_mask=text_input[1])
-        text_labels = [self.text_label_map[label] for label in text_outputs.pooler_output.argmax(dim=1)]
-        text_projected = self.text_projection(text_outputs.pooler_output)
+        _, text_indices = torch.max(text_logits, dim=1)
+        text_labels = [list(self.text_label_map.keys())[list(self.text_label_map.values()).index(i.item())] if i.item() in self.text_label_map.values() else self.unknown_label for i in text_indices]
 
         # Map audio logits to the unified label space
-        audio_labels = [self.audio_label_map[label] for label in audio_input.argmax(dim=1)]
-        audio_projected = self.audio_projection(audio_input)
+        _, audio_indices = torch.max(audio_logits, dim=1)
+        audio_labels = [list(self.audio_label_map.keys())[list(self.audio_label_map.values()).index(i.item())] if i.item() in self.audio_label_map.values() else self.unknown_label for i in audio_indices]
 
         # Fuse outputs
+        vision_projected = self.vision_projection(vision_logits)
+        text_projected = self.text_projection(text_logits)
+        audio_projected = self.audio_projection(audio_logits)
+        # Debugging: Print shapes after projection
+        
         fused_features = torch.cat([vision_projected, text_projected, audio_projected], dim=1)
+        # Debugging: Print shape after concatenation
+        
 
         return fused_features, vision_labels, text_labels, audio_labels
 
+    
+    
 class HydraTiny(nn.Module):
-    def __init__(self, num_classes, feature_dim,text_label_map,vision_label_map,audio_label_map, requires_grad=False):
+    def __init__(self, num_classes, feature_dim,text_label_map,vision_label_map,audio_label_map, unified_label_map, requires_grad=False):
         super(HydraTiny, self).__init__()
 
         # Vision model initialization with DeiT
-        self.vision_model = FPDeitFineTuneTiny(num_labels=[7])
+        self.vision_model = DeitFineTuneTiny(num_labels=[len(vision_label_map)-1])
         if not requires_grad:
             for param in self.vision_model.parameters():
                 param.requires_grad = False
@@ -58,7 +65,7 @@ class HydraTiny(nn.Module):
         # Audio model initialization with custom specifications
         self.audio_model = FPATF_Tiny(
             target_channels=feature_dim, 
-            num_classes=num_classes, 
+            num_classes=len(audio_label_map)-2, 
             num_heads=16, 
             dim_feedforward=1024, 
             num_layers=4, 
@@ -69,13 +76,13 @@ class HydraTiny(nn.Module):
                 param.requires_grad = False
 
         # Fusion layer initialization
-        self.fusion_layer = FusionLayer(vision_dim=768, text_dim=768, audio_dim=feature_dim, unified_dim=768, vision_label_map=vision_label_map, text_label_map=text_label_map, audio_label_map=audio_label_map)
+        self.fusion_layer = FusionLayer(vision_dim=8, text_dim=9, audio_dim=7, unified_dim=176, vision_label_map=vision_label_map, text_label_map=text_label_map, audio_label_map=audio_label_map)
 
         # Additional layers for processing fused features
-        self.f_transformer_1 = self.create_transformer_encoder_layer(512, 8, 1024, 6)
-        self.f_layer_norm = nn.LayerNorm(512)
-        self.f_fc = nn.Linear(512, 256)
-        self.f_transformer_2 = self.create_transformer_encoder_layer(256, 8, 512, 2)
+        self.f_transformer_1 = self.create_transformer_encoder_layer(528, 8, 1024, 6)
+        self.f_layer_norm = nn.LayerNorm(528)
+        self.f_fc = nn.Linear(528, 256)
+        self.f_transformer_2 = self.create_transformer_encoder_layer(d_model=256, nhead=8, dim_feedforward=512, num_layers=2, dropout=0.01)
         self.f_fc2 = nn.Linear(256, 128)
         self.f_fc3 = nn.Linear(128, num_classes)
         
@@ -91,22 +98,31 @@ class HydraTiny(nn.Module):
         layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, dim_feedforward=dim_feedforward, dropout=dropout)
         return nn.TransformerEncoder(layer, num_layers=num_layers)
 
+
     def forward(self, vision_inputs, text_inputs, audio_input):
+        
+                # Example adjustment, assuming vision_inputs ends up with an extra unwanted dimension
         if isinstance(vision_inputs, list):
-            vision_inputs = torch.stack(vision_inputs)  # Converts list to tensor of shape (batch_size, C, H, W)
+            vision_inputs = torch.cat(vision_inputs)  # Use cat instead of stack if they're already batch tensors
+        vision_inputs = torch.squeeze(vision_inputs, dim=1)
+        # Verify the shape is as expected
+        
 
-        # Process vision inputs as a batch
-        vision_features = self.vision_model(pixel_values=vision_inputs).last_hidden_state
-        vision_logits = torch.mean(vision_features, dim=1)
+        # Now proceed with your model processing
+        vision_logits = self.vision_model(pixel_values=vision_inputs)
+        vision_logits = vision_logits.mean(dim=0, keepdim=True)
+    
+                # Squeezing the extra dimension from input_ids and attention_mask
+        squeezed_input_ids = torch.squeeze(text_inputs[0], dim=1)
+        squeezed_attention_mask = torch.squeeze(text_inputs[1], dim=1)
 
-        # Process text inputs
-        text_outputs = self.text_model(input_ids=text_inputs[0], attention_mask=text_inputs[1])
-        text_logits = text_outputs.logits 
-        text_logits = text_outputs.pooler_output
+        # Now, input_ids and attention_mask are of shape [1, 256]
+        # You can then pass these squeezed tensors to your model
+        text_logits = self.text_model(input_ids=squeezed_input_ids, attention_mask=squeezed_attention_mask)
 
         # Process audio inputs
         audio_logits = self.audio_model(audio_input)
-
+        
         # Fuse outputs
         fused_features, vision_labels, text_labels, audio_labels = self.fusion_layer(vision_logits, text_logits, audio_logits)
 

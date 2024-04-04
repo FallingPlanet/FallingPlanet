@@ -47,6 +47,59 @@ class MetricsWrapper:
         self.mcc.reset()
         self.weighted_f1.reset()
         
+import torch
+
+class EpochMetricsWrapper:
+    def __init__(self, num_classes, device, mode='macro'):
+        self.mode = mode
+        # Initialize metrics
+        self.metrics = {
+            'accuracy': Accuracy(num_classes=num_classes, task="multiclass").to(device),
+            'precision': Precision(average=self.mode, num_classes=num_classes, task="multiclass").to(device),
+            'recall': Recall(average=self.mode, num_classes=num_classes, task="multiclass").to(device),
+            'f1': F1Score(average=self.mode, num_classes=num_classes, task="multiclass").to(device),
+            'mcc': MatthewsCorrCoef(num_classes=num_classes, task="multiclass").to(device),
+            'weighted_f1': F1Score(average='weighted', num_classes=num_classes, task="multiclass").to(device)
+        }
+        self.device = device
+        # Containers for accumulated predictions and labels
+        self.all_outputs = []
+        self.all_labels = []
+
+    def update(self, outputs, labels):
+        # Convert outputs to probabilities if they are logits
+        probs = torch.softmax(outputs, dim=1)
+        preds = torch.argmax(probs, dim=1)
+        # Accumulate predictions and labels
+        self.all_outputs.append(preds.cpu())
+        self.all_labels.append(labels.cpu())
+
+    def compute_epoch_metrics(self):
+        # Concatenate all collected outputs and labels
+        all_outputs_concat = torch.cat(self.all_outputs, dim=0)
+        all_labels_concat = torch.cat(self.all_labels, dim=0)
+        # Compute metrics for the entire epoch
+        epoch_metrics = {}
+        for name, metric in self.metrics.items():
+            # Reset metric state to ensure clean calculation
+            metric.reset()
+            # Update metric with accumulated epoch data
+            metric.update(all_outputs_concat.to(self.device), all_labels_concat.to(self.device))
+            # Compute and store the metric
+            epoch_metrics[name] = metric.compute().item()
+        # Clear the accumulated outputs and labels for the next epoch
+        self.reset_epoch_accumulation()
+        return epoch_metrics
+
+    def reset_epoch_accumulation(self):
+        # Clear containers for the next epoch
+        self.all_outputs = []
+        self.all_labels = []
+
+    def reset(self):
+        # Reset individual metrics (optional if compute_epoch_metrics is always used)
+        for metric in self.metrics.values():
+            metric.reset()
 
 def log_model_to_tensorboard(model, dummy_input, log_dir="torchlogs/", model_name="model_graph"):
     """
