@@ -138,7 +138,84 @@ class HydraTiny(nn.Module):
 
 
         
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from FallingPlanet.orbit.models.AuTransformer import FPATF_Tiny
+from FallingPlanet.orbit.models.BertFineTuneForSequenceClassification import BertFineTuneTiny
+from FallingPlanet.orbit.models.DeiTFineTuneForImageClassification import DeitFineTuneTiny
+
+class MultiModalAttention(nn.Module):
+    def __init__(self, vision_feature_dim, text_feature_dim, audio_feature_dim, num_heads):
+        super(MultiModalAttention, self).__init__()
+        self.num_heads = num_heads
+        # Assuming all modalities are projected to the same dimensionality
+        self.projection_dim = max(vision_feature_dim, text_feature_dim, audio_feature_dim)
         
+        self.vision_proj = nn.Linear(vision_feature_dim, self.projection_dim)
+        self.text_proj = nn.Linear(text_feature_dim, self.projection_dim)
+        self.audio_proj = nn.Linear(audio_feature_dim, self.projection_dim)
+        
+        self.attention = nn.MultiheadAttention(embed_dim=self.projection_dim, num_heads=num_heads)
+        self.norm = nn.LayerNorm(self.projection_dim)
+        self.dropout = nn.Dropout(0.1)
+
+    def forward(self, vision_features, text_features, audio_features):
+        # Project features to the same dimensionality
+        vision_proj = self.vision_proj(vision_features)
+        text_proj = self.text_proj(text_features)
+        audio_proj = self.audio_proj(audio_features)
+        
+        # Concatenate along the sequence dimension
+        features = torch.cat((vision_proj, text_proj, audio_proj), dim=0)
+        
+        # Apply multi-head attention
+        attn_output, _ = self.attention(features, features, features)
+        
+        # Apply normalization and dropout
+        output = self.dropout(self.norm(attn_output))
+        
+        return output
+
+class HydraTinyRefactored(nn.Module):
+    def __init__(self, num_classes, text_label_map, vision_label_map, audio_label_map, requires_grad=False):
+        super(HydraTinyRefactored, self).__init__()
+        # Initialize models without the final classification layer
+        self.vision_model = DeitFineTuneTiny(num_labels=[len(vision_label_map)-1], return_features=True)
+        self.text_model = BertFineTuneTiny(num_labels=[num_classes], return_features=True)
+        self.audio_model = FPATF_Tiny(
+            target_channels=None,  # Adjusted to return features
+            num_classes=len(audio_label_map)-2, 
+            num_heads=16, 
+            dim_feedforward=1024, 
+            num_layers=4, 
+            dropout=0.1,
+            return_features=True
+        )
+        
+        # Assuming example feature dimensions, to be adjusted according to actual models
+        self.multi_modal_attention = MultiModalAttention(vision_feature_dim=768, text_feature_dim=768, audio_feature_dim=768, num_heads=3)
+        
+        # Final classification layer
+        self.classifier = nn.Linear(768, num_classes)  # Dimensionality to be adjusted based on attention output
+
+    def forward(self, vision_inputs, text_inputs, audio_inputs):
+        vision_features = self.vision_model(vision_inputs)
+        text_features = self.text_model(*text_inputs)  # Assuming text_inputs is a tuple (input_ids, attention_mask)
+        audio_features = self.audio_model(audio_inputs)
+        
+        # Integrate features using multi-modal attention
+        integrated_features = self.multi_modal_attention(vision_features, text_features, audio_features)
+        
+        # Assuming the attention outputs a single vector of features per input
+        # Adjust if it outputs a sequence
+        integrated_features = integrated_features.mean(dim=0)  # Example reduction
+        
+        # Final classification
+        logits = self.classifier(integrated_features)
+        
+        return logits
+      
                 
          
                     

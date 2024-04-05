@@ -242,7 +242,7 @@ class Agent:
         self.optimizer.step()
 
     def train(self, n_episodes, batch_size):
-        writer = SummaryWriter('runs/DTQN_10k_SpaceInvaders')
+        writer = SummaryWriter('runs/DTQN_10k_Asteroids')
 
         for episode in range(n_episodes):
             start_time = time.time()
@@ -290,9 +290,9 @@ class Agent:
                 self.update_target_network()
 
             if episode % 500 == 0:  # Save the model every 500 episodes
-                self.save_model(f"F:\FP_Agents\SpaceInvaders\dtqn\_policy_model_episode_{episode}.pth")
+                self.save_model(f"F:\FP_Agents\Asteroids\DTQN\_policy_model_episode_{episode}.pth")
             if episode == 100000:
-                self.save_model(f"F:\FP_Agents\SpaceInvaders\dtqn\_policy_model_episode_{episode}.pth")
+                self.save_model(f"F:\FP_Agents\Asteroids\DTQN\_policy_model_episode_{episode}.pth")
             # Periodic evaluation
             if episode % 100 == 0 and episode > 0:  # Avoid evaluation at the very start
                 avg_reward = self.evaluate(n_eval_episodes=5)  # Adjust n_eval_episodes as needed
@@ -302,7 +302,7 @@ class Agent:
             print(f"Episode: {episode+1}, Total reward: {total_reward}, Epsilon: {self.epsilon}, Frames: {frame_count}, Loss: {self.metrics['losses'][-1] if self.metrics['losses'] else 'N/A'}")
 
             
-    def save_model(self, filename="F:\FP_Agents\SpaceInvaders\dtqn\_policy_model.pth"):
+    def save_model(self, filename="F:\FP_Agents\Asteroids\DTQN\_policy_model.pth"):
         """Save the model's state dict and other relevant parameters."""
         checkpoint = {
             'model_state_dict': self.policy_model.state_dict(),
@@ -394,29 +394,29 @@ if __name__ == '__main__':
     if len(sys.argv) > 1:
         mode = sys.argv[1]  # Assume the second argument specifies mode
     # Initialize environment and model
-    env_name = "ALE/SpaceInvaders-v5"
+    env_name = "ALE/Asteroids-v5"
     env = gym.make(env_name)
     env = FrameStack(env,4)
     n_actions = env.action_space.n
     
-    n_observation = 18 # Assuming a stack of 3 frames if not using frame stacking, adjust accordingly
+    n_observation = 14 # Assuming a stack of 3 frames if not using frame stacking, adjust accordingly
 
     # Instantiate policy and target models
     #policy_model = DCQN(n_actions=n_actions)
     #target_model = DCQN(n_actions=n_actions)  # Clone of policy model
     #policy_model = DTQN(num_actions=n_observation, embed_size=512, num_heads=16, num_layers=3,patch_size=16)  # Example values, adjust as needed
     #target_model = DTQN(num_actions=n_observation, embed_size=512, num_heads=16, num_layers=3,patch_size=16)
-    policy_model = EfficientAttentionModel(num_actions=6,input_dim=84*84*4,embed_size=512,num_layers=5)
-    target_model = EfficientAttentionModel(num_actions=6,input_dim=84*84*4,embed_size=512,num_layers=5)
+    policy_model = EfficientAttentionModel(num_actions=n_observation,input_dim=84*84*4,embed_size=512,num_layers=5)
+    target_model = EfficientAttentionModel(num_actions=n_observation,input_dim=84*84*4,embed_size=512,num_layers=5)
     # Instantiate the agent
     n_episodes = 10001
     memory_size = 100000
-    agent = Agent(env_name=env_name, policy_model=policy_model, target_model=target_model, lr=1e-3, gamma=0.99, epsilon_start=1, epsilon_end=0.1, n_episodes=n_episodes, memory_size=memory_size, update_target_every=10, frame_skip=4,buffer_type="sequential")
+    agent = Agent(env_name=env_name, policy_model=policy_model, target_model=target_model, lr=1e-4, gamma=0.99, epsilon_start=1, epsilon_end=0.1, n_episodes=n_episodes, memory_size=memory_size, update_target_every=50, frame_skip=4,buffer_type="sequential")
 
     # Start training
     batch_size = 32
    
-    checkpoint_dir = "F:\FP_Agents\SpaceInvaders\dtqn"
+    checkpoint_dir = "F:\FP_Agents\Asteroids\DTQN"
     if mode == "train":
         print("Starting Training...")
         agent.train(n_episodes=n_episodes, batch_size=32)

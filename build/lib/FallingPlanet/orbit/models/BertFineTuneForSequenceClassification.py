@@ -65,34 +65,35 @@ class BertFineTuneLarge(nn.Module):
 
         
 class BertFineTuneTiny(nn.Module):
-    def __init__(self, num_labels, from_saved_weights=None, num_tasks=1, **kwargs):
+    def __init__(self, num_labels, from_saved_weights=None, num_tasks=1, return_features=False, **kwargs):
         super(BertFineTuneTiny, self).__init__()
         self.bert = BertModel.from_pretrained("prajjwal1/bert-tiny")
+        self.return_features = return_features  # Control flag for returning features
         
         if from_saved_weights:
             self.bert.load_state_dict(torch.load(from_saved_weights))
 
-        if num_tasks > 1:
-            self.classifiers = nn.ModuleList([nn.Linear(128, n_labels) for n_labels in num_labels])
-        else:
-            self.classifier = nn.Linear(128, num_labels[0])
+        # Only initialize classifier(s) if not returning features
+        if not self.return_features:
+            if num_tasks > 1:
+                self.classifiers = nn.ModuleList([nn.Linear(128, n_labels) for n_labels in num_labels])
+            else:
+                self.classifier = nn.Linear(128, num_labels[0])
 
-    
     def forward(self, input_ids, attention_mask):
-        # Process the entire batch through BERT
         outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
-        pooled_output = outputs.pooler_output  # Batched pooled output
+        pooled_output = outputs.pooler_output
 
-        # Apply the classifier(s)
-        if hasattr(self, 'classifiers'):
-            # Multiple classifiers for multi-task scenario
-            all_logits = [classifier(pooled_output) for classifier in self.classifiers]
+        if self.return_features:
+            # Return pooled_output directly for feature extraction
+            return pooled_output
         else:
-            # A single classifier for single-task scenario
-            all_logits = self.classifier(pooled_output)
+            if hasattr(self, 'classifiers'):
+                all_logits = [classifier(pooled_output) for classifier in self.classifiers]
+            else:
+                all_logits = self.classifier(pooled_output)
 
-        return all_logits
-
+            return all_logits
 
 
         
