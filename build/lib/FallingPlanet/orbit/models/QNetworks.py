@@ -159,7 +159,7 @@ class AttentionPooling(nn.Module):
         return context
 
 class DTQN(nn.Module):
-    def __init__(self, num_actions, embed_size=528, num_heads=8, num_layers=1, fc1_out=512, fc2_out=256, fc_intermediate=256, num_stacked_frames=4, patch_size=6):
+    def __init__(self, num_actions, embed_size=528, num_heads=8, num_layers=1, fc1_out=512, fc2_out=128, fc_intermediate=256, num_stacked_frames=4, patch_size=6):
         super(DTQN, self).__init__()
         self.embed_size = embed_size
         self.num_stacked_frames = num_stacked_frames
@@ -273,6 +273,94 @@ class EfficientAttentionModel(nn.Module):
 
 
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+class ConvolutionalFeatures(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.conv1 = nn.Conv2d(4, 64, 3, stride=1, padding=1)
+        self.bn1 = nn.BatchNorm2d(64)
+        self.pool1 = nn.MaxPool2d(2)  # 2x2 pooling
+
+        self.conv2 = nn.Conv2d(64, 128, 3, stride=1, padding=1)
+        self.bn2 = nn.BatchNorm2d(128)
+        self.pool2 = nn.MaxPool2d(2)  # 2x2 pooling
+
+        self.conv3 = nn.Conv2d(128, 256, 3, stride=1, padding=1)
+        self.bn3 = nn.BatchNorm2d(256)
+        self.pool3 = nn.MaxPool2d(2)  # 2x2 pooling
+
+        self.conv4 = nn.Conv2d(256, 512, 3, stride=2, padding=1)
+        self.bn4 = nn.BatchNorm2d(512)
+        self.pool4 = nn.AdaptiveAvgPool2d((1, 1))  # Final output to 1x1 spatial dimension
+
+    def forward(self, x):
+        x = F.relu(self.bn1(self.conv1(x)))
+        x = self.pool1(x)
+        x = F.relu(self.bn2(self.conv2(x)))
+        x = self.pool2(x)
+        x = F.relu(self.bn3(self.conv3(x)))
+        x = self.pool3(x)
+        x = F.relu(self.bn4(self.conv4(x)))
+        x = self.pool4(x)
+        return x
+
+class GatedTransformerBlock(nn.Module):
+    def __init__(self, embed_size, heads, dropout):
+        super().__init__()
+        self.attention = nn.MultiheadAttention(embed_size, heads, dropout=dropout)
+        self.norm1 = nn.LayerNorm(embed_size)
+        self.norm2 = nn.LayerNorm(embed_size)
+        self.ff = nn.Sequential(
+            nn.Linear(embed_size, embed_size * 4),
+            nn.ReLU(),
+            nn.Linear(embed_size * 4, embed_size)
+        )
+        self.gru = nn.GRUCell(embed_size, embed_size)
+
+    def forward(self, x):
+        identity = x
+        x, _ = self.attention(x, x, x)
+        x = self.norm1(identity + x)
+        x = self.norm2(x + self.ff(x))
+        return x
+
+class CGTQN(nn.Module):
+    def __init__(self, n_actions, num_transformer_blocks=6, hidden_sizes=[2048, 1024, 768, 512,256]):
+        super().__init__()
+        self.conv_features = ConvolutionalFeatures()
+        self.positional_embeddings = nn.Parameter(torch.randn(1, 512))
+        # Double the number of transformer blocks
+        self.transformer = nn.ModuleList([GatedTransformerBlock(embed_size=512, heads=16, dropout=0.1) 
+                                          for _ in range(num_transformer_blocks)])
+        fc_layers = []
+        input_size = 512
+        for size in hidden_sizes:
+            fc_layers.extend([nn.Linear(input_size, size), nn.ReLU()])
+            input_size = size
+        fc_layers.append(nn.Linear(input_size, n_actions))
+        self.fc = nn.Sequential(*fc_layers)
+
+    def forward(self, x):
+        if x.dim() == 5:
+            x = x.squeeze(2)
+        x = self.conv_features(x)
+        x = x.view(x.size(0), -1)
+        x += self.positional_embeddings
+        x = x.unsqueeze(1)
+        for block in self.transformer:
+            x = block(x)
+        x = x.squeeze(1)
+        return self.fc(x)
+
+
+
+
+
+
+
 # Checking parameter size
 def check_param_size(model):
     total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -305,6 +393,10 @@ dtqn_param_size = check_param_size(dtqn_model)
 print(check_param_size(edtqn))
 print("DCQN Param Size:", dcqn_param_size)
 print("DTQN Param Size:", dtqn_param_size)
+n_actions = 6  # Example value, replace with the actual number of actions for your specific environment
+cgtqn_model = CGTQN(n_actions=n_actions)
+cgtqn_param_size = check_param_size(cgtqn_model)
+print("CGTQN Param Size:", cgtqn_param_size)
 
 
 

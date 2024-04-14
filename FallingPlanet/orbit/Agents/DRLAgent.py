@@ -4,7 +4,7 @@ import torch.optim as optim
 import random
 from collections import deque
 import numpy as np
-from FallingPlanet.orbit.models.QNetworks import DCQN, DTQN, EfficientAttentionModel
+from FallingPlanet.orbit.models.QNetworks import DCQN, DTQN, EfficientAttentionModel, CGTQN
 from torchvision import transforms
 import time
 import torch
@@ -232,7 +232,7 @@ class Agent:
 
         target_q_values = rewards + self.gamma * next_q_values
         target_q_values = target_q_values.squeeze(-1)
-        loss = F.mse_loss(current_q_values, target_q_values)
+        loss = F.huber_loss(current_q_values, target_q_values)
         self.metrics["losses"].append(loss.item())
 
         self.optimizer.zero_grad()
@@ -242,7 +242,7 @@ class Agent:
         self.optimizer.step()
 
     def train(self, n_episodes, batch_size):
-        writer = SummaryWriter('runs/DTQN_10k_Asteroids')
+        writer = SummaryWriter('runs/CGTQN_10k_Asteroids')
 
         for episode in range(n_episodes):
             start_time = time.time()
@@ -290,9 +290,9 @@ class Agent:
                 self.update_target_network()
 
             if episode % 500 == 0:  # Save the model every 500 episodes
-                self.save_model(f"F:\FP_Agents\Asteroids\DTQN\_policy_model_episode_{episode}.pth")
+                self.save_model(f"F:\FP_Agents\Asteroids\CGTQN\_policy_model_episode_{episode}.pth")
             if episode == 100000:
-                self.save_model(f"F:\FP_Agents\Asteroids\DTQN\_policy_model_episode_{episode}.pth")
+                self.save_model(f"F:\FP_Agents\Asteroids\CGTQN\_policy_model_episode_{episode}.pth")
             # Periodic evaluation
             if episode % 100 == 0 and episode > 0:  # Avoid evaluation at the very start
                 avg_reward = self.evaluate(n_eval_episodes=5)  # Adjust n_eval_episodes as needed
@@ -302,7 +302,7 @@ class Agent:
             print(f"Episode: {episode+1}, Total reward: {total_reward}, Epsilon: {self.epsilon}, Frames: {frame_count}, Loss: {self.metrics['losses'][-1] if self.metrics['losses'] else 'N/A'}")
 
             
-    def save_model(self, filename="F:\FP_Agents\Asteroids\DTQN\_policy_model.pth"):
+    def save_model(self, filename="F:\FP_Agents\Asteroids\CGTQN\_policy_model.pth"):
         """Save the model's state dict and other relevant parameters."""
         checkpoint = {
             'model_state_dict': self.policy_model.state_dict(),
@@ -339,7 +339,7 @@ class Agent:
         self.policy_model.eval()  # Ensure the model is in evaluation mode
 
         # Evaluate the model
-        avg_reward = self.evaluate(n_eval_episodes=5)
+        avg_reward = self.evaluate(n_eval_episodes=3)
         print(f"Evaluated {checkpoint_path}: Average Reward = {avg_reward}")
         
 def plot_metrics(metrics):
@@ -390,24 +390,26 @@ def plot_metrics(metrics):
 
 
 if __name__ == '__main__':
-    mode = "train"  # Default mode
+    mode = "eval"  # Default mode
     if len(sys.argv) > 1:
         mode = sys.argv[1]  # Assume the second argument specifies mode
     # Initialize environment and model
-    env_name = "ALE/Asteroids-v5"
+    env_name = "ALE/SpaceInvaders-v5"
     env = gym.make(env_name)
     env = FrameStack(env,4)
     n_actions = env.action_space.n
     
-    n_observation = 14 # Assuming a stack of 3 frames if not using frame stacking, adjust accordingly
+    n_observation = 6 # Assuming a stack of 3 frames if not using frame stacking, adjust accordingly
 
     # Instantiate policy and target models
-    #policy_model = DCQN(n_actions=n_actions)
-    #target_model = DCQN(n_actions=n_actions)  # Clone of policy model
-    #policy_model = DTQN(num_actions=n_observation, embed_size=512, num_heads=16, num_layers=3,patch_size=16)  # Example values, adjust as needed
-    #target_model = DTQN(num_actions=n_observation, embed_size=512, num_heads=16, num_layers=3,patch_size=16)
-    policy_model = EfficientAttentionModel(num_actions=n_observation,input_dim=84*84*4,embed_size=512,num_layers=5)
-    target_model = EfficientAttentionModel(num_actions=n_observation,input_dim=84*84*4,embed_size=512,num_layers=5)
+    policy_model = DCQN(n_actions=n_actions)
+    target_model = DCQN(n_actions=n_actions)  # Clone of policy model
+    #policy_model = DTQN(num_actions=n_observation, embed_size=512, num_heads=16, num_layers=3,patch_size=16,fc2_out=128)  # Example values, adjust as needed
+    #target_model = DTQN(num_actions=n_observation, embed_size=512, num_heads=16, num_layers=3,patch_size=16,fc2_out=128)
+    #policy_model = EfficientAttentionModel(num_actions=n_observation,input_dim=84*84*4,embed_size=512,num_layers=5)
+    #target_model = EfficientAttentionModel(num_actions=n_observation,input_dim=84*84*4,embed_size=512,num_layers=5)
+    #policy_model =  CGTQN(n_actions=n_actions)
+    #target_model =  CGTQN(n_actions=n_actions)
     # Instantiate the agent
     n_episodes = 10001
     memory_size = 100000
@@ -416,7 +418,7 @@ if __name__ == '__main__':
     # Start training
     batch_size = 32
    
-    checkpoint_dir = "F:\FP_Agents\Asteroids\DTQN"
+    checkpoint_dir = "F:\FP_Agents\SpaceInvaders\DCQN"
     if mode == "train":
         print("Starting Training...")
         agent.train(n_episodes=n_episodes, batch_size=32)
