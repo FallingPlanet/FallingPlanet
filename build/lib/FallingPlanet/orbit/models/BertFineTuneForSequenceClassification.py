@@ -63,37 +63,43 @@ class BertFineTuneLarge(nn.Module):
 
 
 
-        
 class BertFineTuneTiny(nn.Module):
-    def __init__(self, num_labels, from_saved_weights=None, num_tasks=1, return_features=False, **kwargs):
+    def __init__(self, num_labels, from_saved_weights=None):
         super(BertFineTuneTiny, self).__init__()
         self.bert = BertModel.from_pretrained("prajjwal1/bert-tiny")
-        self.return_features = return_features  # Control flag for returning features
         
         if from_saved_weights:
             self.bert.load_state_dict(torch.load(from_saved_weights))
+        
+        self.classifiers = nn.ModuleList([
+            nn.Linear(self.bert.config.hidden_size, labels) for labels in num_labels
+        ])
 
-        # Only initialize classifier(s) if not returning features
-        if not self.return_features:
-            if num_tasks > 1:
-                self.classifiers = nn.ModuleList([nn.Linear(128, n_labels) for n_labels in num_labels])
-            else:
-                self.classifier = nn.Linear(128, num_labels[0])
+    def forward(self, input_ids_list, attention_mask_list):
+        # Input validation
+        if len(input_ids_list) != len(self.classifiers) or len(attention_mask_list) != len(self.classifiers):
+            raise ValueError(f"Expected {len(self.classifiers)} inputs for each of input_ids and attention_mask, got {len(input_ids_list)} and {len(attention_mask_list)} respectively.")
 
-    def forward(self, input_ids, attention_mask):
-        outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
-        pooled_output = outputs.pooler_output
+        task_outputs = []
 
-        if self.return_features:
-            # Return pooled_output directly for feature extraction
-            return pooled_output
-        else:
-            if hasattr(self, 'classifiers'):
-                all_logits = [classifier(pooled_output) for classifier in self.classifiers]
-            else:
-                all_logits = self.classifier(pooled_output)
+        for i, classifier in enumerate(self.classifiers):
+            # Extract the input_ids and attention_mask for the current task
+            input_ids = input_ids_list[i]
+            attention_mask = attention_mask_list[i]
 
-            return all_logits
+            # BERT forward pass
+            outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
+
+            # Use mean pooling on the sequence output to retain batch size
+            pooled_output = outputs.last_hidden_state.mean(dim=1)
+
+            # Get logits for the current task
+            logits = classifier(pooled_output)
+            task_outputs.append(logits)
+
+        return task_outputs
+
+
 
 
         
